@@ -1,0 +1,101 @@
+================================================================================
+AUTONOMOUS DRONE SIMULATION - QUICK START
+================================================================================
+
+PREREQUISITES
+-------------
+✓ Docker & Docker Compose installed
+✓ 8GB+ RAM available
+✓ 20GB free disk space
+
+STEP 1: BUILD (First time only, ~30-60 minutes)
+------------------------------------------------
+cd autonomous_drone_sim
+docker-compose build
+
+STEP 2: START ENVIRONMENT
+--------------------------
+docker-compose up -d
+
+STEP 3: RUN MINIMAL SIMULATION
+-------------------------------
+docker exec -it drone_sim bash
+
+# Inside container:
+cd /workspace
+python scripts/training/minimal_simulation.py
+
+Expected output:
+  ✓✓✓ MINIMAL SIMULATION SUCCESSFUL ✓✓✓
+
+STEP 4: TRAIN RL AGENT (Optional)
+----------------------------------
+docker exec -it drone_sim bash
+
+# Inside container:
+python scripts/training/train_ppo.py \
+    --env DroneNav-v0 \
+    --timesteps 1000000 \
+    --n-envs 4
+
+Monitor with TensorBoard:
+  docker exec -it drone_sim bash
+  tensorboard --logdir=/workspace/data/logs --host=0.0.0.0
+  # Access at: http://localhost:6006
+
+STEP 5: EVALUATE MODEL (Optional)
+----------------------------------
+python scripts/evaluation/evaluate_model.py \
+    --model data/checkpoints/best_model.zip \
+    --episodes 100
+
+Expected output:
+  Success rate: >95%
+  Control loop: <20ms
+  ✓ ALL ACCEPTANCE CRITERIA MET ✓✓✓
+
+COMMON COMMANDS
+---------------
+# Stop services
+docker-compose down
+
+# View logs
+docker logs drone_sim
+
+# Enter container
+docker exec -it drone_sim bash
+
+# List running containers
+docker ps
+
+TROUBLESHOOTING
+---------------
+Problem: "No heartbeat received"
+Solution: Ensure SITL is running in the container
+
+Problem: "Connection timeout"
+Solution: Check ports 14550 and 41451 are open
+
+Problem: "Out of memory"
+Solution: Increase Docker memory limit to 8GB+
+
+Problem: Docker build fails
+Solution: docker system prune -a && docker-compose build
+
+DOCUMENTATION
+-------------
+📖 Full documentation: README.md
+📖 Installation guide: docs/installation.md
+📖 Quick start guide: docs/quick_start.md
+📖 Project summary: PROJECT_SUMMARY.md
+
+SUPPORT
+-------
+For issues:
+1. Check troubleshooting sections in documentation
+2. Review installation.md
+3. Create an issue in the repository
+
+================================================================================
+READY TO GO! Run the commands above to start your autonomous drone simulation.
+================================================================================

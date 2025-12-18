@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  # Main simulation environment
+  drone_sim:
+    container_name: drone_sim
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: autonomous_drone_sim:latest
+
+    # Enable GUI applications via X11
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - MAVLINK20=1
+      - AIRSIM_HOST=airsim
+      - ROS_DOMAIN_ID=42
+
+    volumes:
+      # Mount workspace
+      - .:/workspace
+
+      # Mount X11 socket for GUI
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+      # Persist data
+      - ./data:/workspace/data
+
+      # Shared memory for improved performance
+      - /dev/shm:/dev/shm
+
+    # Network configuration
+    network_mode: "host"
+
+    # Device access
+    privileged: true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+    # Keep container running
+    stdin_open: true
+    tty: true
+
+    command: bash
+
+  # TensorBoard for training visualization
+  tensorboard:
+    container_name: tensorboard
+    image: tensorflow/tensorflow:latest
+
+    ports:
+      - "6006:6006"
+
+    volumes:
+      - ./data/logs:/logs
+
+    command: tensorboard --logdir=/logs --host=0.0.0.0 --port=6006
+
+    restart: unless-stopped
+
+  # Optional: Jupyter notebook for analysis
+  jupyter:
+    container_name: jupyter
+    image: jupyter/scipy-notebook:latest
+
+    ports:
+      - "8888:8888"
+
+    volumes:
+      - .:/home/jovyan/work
+      - ./data:/home/jovyan/work/data
+
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+
+    command: start-notebook.sh --NotebookApp.token='' --NotebookApp.password=''
+
+    restart: unless-stopped
+
+  # Optional: Grafana for real-time monitoring
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./configs/grafana:/etc/grafana/provisioning
+
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+
+    restart: unless-stopped
+
+volumes:
+  grafana-storage:
+
+networks:
+  default:
+    name: drone_network

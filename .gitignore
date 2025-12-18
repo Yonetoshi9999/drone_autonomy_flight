@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data and Logs
+data/logs/**/*.csv
+data/logs/**/*.tfevents.*
+data/checkpoints/**/*.zip
+data/checkpoints/**/best_model/
+data/recordings/**/*.mp4
+data/recordings/**/*.avi
+*.log
+*.bag
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Docker
+.dockerignore
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Keep directory structure but ignore content
+data/logs/.gitkeep
+data/checkpoints/.gitkeep
+data/recordings/.gitkeep
+
+# AirSim
+Documents/AirSim/
+
+# Training artifacts
+wandb/
+tensorboard/
+mlruns/

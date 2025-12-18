@@ -1,0 +1,274 @@
+{
+  "SeeDocsAt": "https://github.com/Microsoft/AirSim/blob/master/docs/settings.md",
+  "SettingsVersion": 1.2,
+
+  "SimMode": "Multirotor",
+
+  "ClockType": "SteppableClock",
+  "ClockSpeed": 1.0,
+
+  "ViewMode": "SpringArmChase",
+  "CameraDefaults": {
+    "CaptureSettings": [
+      {
+        "ImageType": 0,
+        "Width": 1920,
+        "Height": 1080,
+        "FOV_Degrees": 90,
+        "AutoExposureSpeed": 100,
+        "MotionBlurAmount": 0
+      }
+    ]
+  },
+
+  "Vehicles": {
+    "EDU650": {
+      "VehicleType": "SimpleFlight",
+      "DefaultVehicleState": "Armed",
+      "AutoCreate": true,
+      "EnableTrace": false,
+
+      "X": 0.0,
+      "Y": 0.0,
+      "Z": -2.0,
+      "Pitch": 0.0,
+      "Roll": 0.0,
+      "Yaw": 0.0,
+
+      "Cameras": {
+        "front_center": {
+          "CameraName": "front_center",
+          "ImageType": 0,
+          "Width": 1920,
+          "Height": 1080,
+          "FOV_Degrees": 90,
+          "X": 0.25,
+          "Y": 0.0,
+          "Z": -0.05,
+          "Pitch": 0.0,
+          "Roll": 0.0,
+          "Yaw": 0.0,
+          "CaptureSettings": [
+            {
+              "ImageType": 0,
+              "Width": 1920,
+              "Height": 1080,
+              "FOV_Degrees": 90,
+              "TargetGamma": 1.0,
+              "AutoExposureSpeed": 100,
+              "AutoExposureMaxBrightness": 0.64,
+              "AutoExposureMinBrightness": 0.03,
+              "MotionBlurAmount": 0,
+              "ProjectionMode": "",
+              "OrthoWidth": 5.12
+            },
+            {
+              "ImageType": 1,
+              "Width": 1920,
+              "Height": 1080,
+              "PixelsAsFloat": true
+            },
+            {
+              "ImageType": 2,
+              "Width": 1920,
+              "Height": 1080
+            },
+            {
+              "ImageType": 5,
+              "Width": 1920,
+              "Height": 1080
+            }
+          ]
+        },
+        "bottom_center": {
+          "CameraName": "bottom_center",
+          "ImageType": 0,
+          "Width": 640,
+          "Height": 480,
+          "FOV_Degrees": 90,
+          "X": 0.0,
+          "Y": 0.0,
+          "Z": 0.15,
+          "Pitch": 90.0,
+          "Roll": 0.0,
+          "Yaw": 0.0,
+          "CaptureSettings": [
+            {
+              "ImageType": 0,
+              "Width": 640,
+              "Height": 480
+            }
+          ]
+        }
+      },
+
+      "Sensors": {
+        "Imu": {
+          "SensorType": 2,
+          "Enabled": true,
+          "UpdateFrequency": 400.0
+        },
+
+        "Gps": {
+          "SensorType": 3,
+          "Enabled": true,
+          "UpdateFrequency": 10.0,
+          "StartupDelay": 1.0,
+          "EphTimeConstant": 0.9,
+          "EpvTimeConstant": 0.9,
+          "EphInitial": 25.0,
+          "EpvInitial": 25.0,
+          "EphFinal": 0.1,
+          "EpvFinal": 0.1,
+          "EphMin3d": 3.0,
+          "EphMin2d": 4.0
+        },
+
+        "Magnetometer": {
+          "SensorType": 4,
+          "Enabled": true,
+          "UpdateFrequency": 50.0
+        },
+
+        "Barometer": {
+          "SensorType": 1,
+          "Enabled": true,
+          "UpdateFrequency": 50.0,
+          "QNH": 1013.25
+        },
+
+        "LidarFront": {
+          "SensorType": 6,
+          "Enabled": true,
+          "NumberOfChannels": 360,
+          "Range": 16.0,
+          "PointsPerSecond": 3600,
+          "RotationsPerSecond": 10,
+          "VerticalFOVUpper": 0,
+          "VerticalFOVLower": 0,
+          "HorizontalFOVStart": -180,
+          "HorizontalFOVEnd": 180,
+          "DrawDebugPoints": false,
+          "DataFrame": "SensorLocalFrame",
+          "ExternalController": false,
+          "X": 0.0,
+          "Y": 0.0,
+          "Z": -0.10,
+          "Roll": 0,
+          "Pitch": 0,
+          "Yaw": 0
+        },
+
+        "Distance": {
+          "SensorType": 5,
+          "Enabled": true,
+          "MinDistance": 0.15,
+          "MaxDistance": 16.0,
+          "X": 0.25,
+          "Y": 0.0,
+          "Z": 0.0,
+          "Roll": 0,
+          "Pitch": 0,
+          "Yaw": 0
+        }
+      },
+
+      "Parameters": {
+        "VehicleMass": 3.4,
+        "RotorCount": 4,
+        "RotorConfiguration": "X",
+        "ArmLength": 0.325,
+        "RotorRadius": 0.127,
+        "RotorHeight": 0.04,
+        "RotorMaxSpeed": 7200.0,
+
+        "LinearDrag": {
+          "X": 0.1,
+          "Y": 0.1,
+          "Z": 0.1
+        },
+
+        "AngularDrag": {
+          "X": 0.01,
+          "Y": 0.01,
+          "Z": 0.01
+        },
+
+        "Inertia": {
+          "X": 0.147,
+          "Y": 0.147,
+          "Z": 0.264
+        },
+
+        "MaxThrustNewtons": 66.64,
+        "MotorTimeConstant": 0.02,
+
+        "RC": {
+          "RemoteControlID": 0,
+          "AllowAPIWhenDisconnected": true,
+          "AllowAPIAlways": true
+        }
+      },
+
+      "EnableCollisionPassthrough": false,
+      "EnableCollisions": true,
+      "AllowAPIAlways": true,
+      "EnableApiControl": true,
+      "RC": {
+        "RemoteControlID": 0,
+        "AllowAPIWhenDisconnected": true
+      }
+    }
+  },
+
+  "PhysicsEngineName": "FastPhysicsEngine",
+  "SpeedUpFactor": 1.0,
+
+  "Wind": {
+    "Speed": 0.0,
+    "Direction": 0.0,
+    "Gustiness": 0.0
+  },
+
+  "TimeOfDay": {
+    "Enabled": false,
+    "StartDateTime": "2023-01-01 12:00:00",
+    "CelestialClockSpeed": 1,
+    "StartDateTimeDst": false,
+    "UpdateIntervalSecs": 60
+  },
+
+  "SubWindows": [
+    {
+      "WindowID": 0,
+      "CameraName": "front_center",
+      "ImageType": 0,
+      "Visible": true
+    }
+  ],
+
+  "Recording": {
+    "RecordOnMove": false,
+    "RecordInterval": 0.05,
+    "RecordUIVisible": true,
+    "Cameras": [
+      {
+        "CameraName": "front_center",
+        "ImageType": 0,
+        "PixelsAsFloat": false,
+        "Compress": true
+      }
+    ]
+  },
+
+  "LocalHostIp": "127.0.0.1",
+  "ApiServerPort": 41451,
+  "RpcEnabled": true,
+
+  "EngineSound": true,
+  "PhysicsEngineUpdateInterval": 0.002,
+  "EnableRpc": true,
+
+  "LogMessagesVisible": true,
+  "UsageScenario": "ComputerVision"
+}

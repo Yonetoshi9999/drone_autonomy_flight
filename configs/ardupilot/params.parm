@@ -1,0 +1,209 @@
+# ArduPilot Parameters for EDU650 Quadcopter
+# Custom configuration for 3.4kg quadcopter in X configuration
+# Last updated: 2025-12-18
+
+# ============================================
+# FRAME AND MOTOR CONFIGURATION
+# ============================================
+FRAME_CLASS,1                    # Quad
+FRAME_TYPE,1                     # X configuration
+MOT_PWM_TYPE,0                   # Normal PWM
+MOT_PWM_MIN,1000                 # Minimum PWM
+MOT_PWM_MAX,2000                 # Maximum PWM
+MOT_SPIN_ARM,0.10                # Motor spin when armed (%)
+MOT_SPIN_MIN,0.15                # Motor minimum throttle
+MOT_SPIN_MAX,0.95                # Motor maximum throttle
+MOT_THST_HOVER,0.35              # Hover throttle (35% for 3.4kg)
+MOT_THST_EXPO,0.65               # Thrust curve expo
+
+# ============================================
+# VEHICLE MASS AND INERTIA
+# ============================================
+# EDU650 specifications: 3.4kg total mass
+# Estimated moment of inertia based on typical quadcopter
+INS_GYRO_FILTER,20               # Gyro filter (Hz)
+INS_ACCEL_FILTER,20              # Accelerometer filter (Hz)
+
+# ============================================
+# PID TUNING FOR EDU650
+# ============================================
+# Roll axis
+ATC_RAT_RLL_P,0.135              # Roll rate P gain
+ATC_RAT_RLL_I,0.135              # Roll rate I gain
+ATC_RAT_RLL_D,0.0036             # Roll rate D gain
+ATC_RAT_RLL_FF,0.0               # Roll rate feedforward
+
+# Pitch axis
+ATC_RAT_PIT_P,0.135              # Pitch rate P gain
+ATC_RAT_PIT_I,0.135              # Pitch rate I gain
+ATC_RAT_PIT_D,0.0036             # Pitch rate D gain
+ATC_RAT_PIT_FF,0.0               # Pitch rate feedforward
+
+# Yaw axis
+ATC_RAT_YAW_P,0.180              # Yaw rate P gain
+ATC_RAT_YAW_I,0.018              # Yaw rate I gain
+ATC_RAT_YAW_D,0.000              # Yaw rate D gain
+ATC_RAT_YAW_FF,0.0               # Yaw rate feedforward
+
+# Angle control
+ATC_ANG_RLL_P,4.5                # Roll angle P gain
+ATC_ANG_PIT_P,4.5                # Pitch angle P gain
+ATC_ANG_YAW_P,4.5                # Yaw angle P gain
+
+# ============================================
+# POSITION AND VELOCITY CONTROL
+# ============================================
+PSC_VELXY_P,1.0                  # Horizontal velocity P
+PSC_VELXY_I,0.5                  # Horizontal velocity I
+PSC_VELXY_D,0.0                  # Horizontal velocity D
+PSC_VELXY_FF,0.0                 # Horizontal velocity FF
+PSC_VELXY_FILT,5.0               # Velocity filter (Hz)
+
+PSC_VELZ_P,5.0                   # Vertical velocity P
+PSC_VELZ_I,1.0                   # Vertical velocity I
+PSC_VELZ_D,0.0                   # Vertical velocity D
+
+PSC_POSXY_P,1.0                  # Horizontal position P
+PSC_POSZ_P,1.0                   # Vertical position P
+
+# ============================================
+# CUSTOM FLIGHT MODES (EDU650 Specific)
+# ============================================
+FLTMODE1,0                       # Stabilize
+FLTMODE2,2                       # AltHold
+FLTMODE3,3                       # Auto
+FLTMODE4,4                       # Guided
+FLTMODE5,5                       # Loiter
+FLTMODE6,6                       # RTL
+
+# Custom flight modes
+FLTMODE_CH,5                     # Flight mode channel
+# Mode 98: System ID (custom mode for system identification)
+# Mode 99: Smart Photo (custom mode for photography missions)
+
+# ============================================
+# FAILSAFE CONFIGURATION
+# ============================================
+FS_GCS_ENABLE,1                  # GCS failsafe enabled
+FS_THR_ENABLE,1                  # Throttle failsafe enabled
+FS_THR_VALUE,975                 # Throttle failsafe value
+FS_BATT_ENABLE,1                 # Battery failsafe enabled
+FS_BATT_VOLTAGE,10.5             # Low battery voltage (3S LiPo)
+FS_BATT_MAH,5000                 # Battery capacity (mAh)
+FS_EKF_ACTION,1                  # EKF failsafe: Land
+FS_EKF_THRESH,0.8                # EKF variance threshold
+FS_CRASH_CHECK,1                 # Crash check enabled
+
+# ============================================
+# GPS AND NAVIGATION
+# ============================================
+GPS_TYPE,1                       # Auto detect GPS
+GPS_AUTO_SWITCH,1                # Auto switch GPS
+EK3_SRC1_POSXY,3                 # GPS position source
+EK3_SRC1_VELXY,3                 # GPS velocity source
+EK3_SRC1_POSZ,1                  # Barometer altitude source
+EK3_SRC1_VELZ,3                  # GPS vertical velocity
+
+# RTK GPS support
+GPS_TYPE2,1                      # Secondary GPS
+GPS_AUTO_CONFIG,1                # Auto-configure GPS
+
+# Navigation parameters
+WPNAV_SPEED,500                  # Horizontal speed (cm/s) = 5 m/s
+WPNAV_SPEED_UP,250               # Climb rate (cm/s) = 2.5 m/s
+WPNAV_SPEED_DN,150               # Descent rate (cm/s) = 1.5 m/s
+WPNAV_RADIUS,200                 # Waypoint radius (cm) = 2m
+WPNAV_ACCEL,100                  # Horizontal acceleration (cm/s²)
+
+# ============================================
+# FENCE AND GEOFENCE
+# ============================================
+FENCE_ENABLE,1                   # Fence enabled
+FENCE_TYPE,7                     # All fence types (max alt, circle, polygon)
+FENCE_ACTION,1                   # RTL on fence breach
+FENCE_ALT_MAX,120                # Maximum altitude (m)
+FENCE_RADIUS,300                 # Fence radius (m)
+FENCE_MARGIN,2                   # Fence margin (m)
+
+# ============================================
+# SENSORS
+# ============================================
+# IMU configuration (400Hz update rate)
+INS_ENABLE_MASK,3                # Enable first 2 IMUs
+INS_GYRO_RATE,0                  # Fast sampling (0 = 1kHz internal)
+INS_FAST_SAMPLE,1                # Fast sampling enabled
+
+# Rangefinder (for RPLidar A2M8)
+RNGFND1_TYPE,10                  # MAVLink rangefinder
+RNGFND1_MIN_CM,15                # Minimum range (cm)
+RNGFND1_MAX_CM,1600              # Maximum range (cm) = 16m
+RNGFND1_ORIENT,0                 # Forward facing
+RNGFND1_GNDCLEAR,10              # Ground clearance (cm)
+
+# Optical flow and camera
+FLOW_TYPE,6                      # MAVLink optical flow
+FLOW_FXSCALER,1.0                # X scale factor
+FLOW_FYSCALER,1.0                # Y scale factor
+
+# ============================================
+# BATTERY MONITORING
+# ============================================
+BATT_MONITOR,4                   # Voltage and current monitoring
+BATT_CAPACITY,5000               # Battery capacity (mAh)
+BATT_VOLT_PIN,2                  # Voltage sensing pin
+BATT_CURR_PIN,3                  # Current sensing pin
+BATT_VOLT_MULT,10.1              # Voltage multiplier
+BATT_AMP_PERVLT,17.0             # Current per volt
+
+# ============================================
+# CONTROL FREQUENCY (50Hz @ 20ms)
+# ============================================
+SCHED_LOOP_RATE,50               # Main loop rate (Hz)
+
+# ============================================
+# ARMING CHECKS
+# ============================================
+ARMING_CHECK,1                   # All arming checks
+ARMING_ACCTHRESH,0.75            # Accelerometer threshold
+
+# ============================================
+# LOGGING
+# ============================================
+LOG_BACKEND_TYPE,1               # File logging
+LOG_FILE_DSRMROT,1               # Disarm rotation
+LOG_BITMASK,176126               # Log everything useful
+LOG_FILE_BUFSIZE,200             # File buffer size (KB)
+
+# ============================================
+# SIMULATION-SPECIFIC PARAMETERS
+# ============================================
+SIM_SPEEDUP,1                    # Real-time factor (1x)
+SIM_WIND_SPD,0                   # Wind speed (m/s)
+SIM_WIND_DIR,0                   # Wind direction (degrees)
+SIM_WIND_TURB,0                  # Wind turbulence
+
+# AirSim integration
+SERIAL0_PROTOCOL,2               # MAVLink2 on Serial0
+SERIAL0_BAUD,115200              # Baud rate
+
+# ============================================
+# OBSTACLE AVOIDANCE
+# ============================================
+AVOID_ENABLE,7                   # All avoidance features
+AVOID_MARGIN,2.0                 # Avoid margin (m)
+AVOID_BEHAVE,0                   # Slide behavior
+AVOID_DIST_MAX,10                # Maximum distance (m)
+AVOID_ANGLE_MAX,30               # Maximum angle (degrees)
+
+# ============================================
+# PRECISION LANDING
+# ============================================
+PLND_ENABLED,0                   # Precision landing disabled by default
+PLND_TYPE,0                      # Companion computer
+
+# ============================================
+# SMART FEATURES
+# ============================================
+# These parameters can be used for custom modes 98 and 99
+# Mode 98: System ID - allows system identification maneuvers
+# Mode 99: Smart Photo - automated photography missions
