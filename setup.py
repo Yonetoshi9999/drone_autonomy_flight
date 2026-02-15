@@ -12,7 +12,7 @@ setup(
         "scipy>=1.7.0",
         "gym>=0.26.0",
         "pymavlink>=2.4.37",
-        "airsim>=1.8.1",
+        # "airsim>=1.8.1",  # Skipped - AirSim not installed
         "opencv-python>=4.7.0",
         "matplotlib>=3.5.0",
         "pyyaml>=6.0",

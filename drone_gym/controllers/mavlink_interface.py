@@ -33,6 +33,9 @@ class MAVLinkInterface:
         timeout: float = 5.0,
         target_system: int = 1,
         target_component: int = 1,
+        motor_kv: float = 920.0,
+        battery_voltage: float = 16.0,
+        num_motors: int = 4,
     ):
         """
         Initialize MAVLink interface.
@@ -43,12 +46,20 @@ class MAVLinkInterface:
             timeout: Connection timeout in seconds
             target_system: Target system ID
             target_component: Target component ID
+            motor_kv: Motor KV rating (RPM per volt)
+            battery_voltage: Battery voltage (V)
+            num_motors: Number of motors
         """
         self.connection_string = connection_string
         self.baud_rate = baud_rate
         self.timeout = timeout
         self.target_system = target_system
         self.target_component = target_component
+
+        # Motor configuration
+        self.motor_kv = motor_kv
+        self.battery_voltage = battery_voltage
+        self.num_motors = num_motors
 
         # Connection
         self.master: Optional[mavutil.mavlink_connection] = None
@@ -66,6 +77,11 @@ class MAVLinkInterface:
             'gps_fix': 0,
             'heading': 0.0,  # Heading in degrees
         }
+
+        # Motor outputs from ArduPilot
+        self.motor_pwm = np.zeros(num_motors)  # PWM values (1000-2000 μs)
+        self.motor_rpms = np.zeros(num_motors)  # Converted RPM values
+        self.last_motor_update = time.time()
 
         # Performance metrics
         self.loop_times = deque(maxlen=100)
@@ -157,6 +173,17 @@ class MAVLinkInterface:
             1,
         )
 
+        # Request RC channels (includes servo outputs) at 50Hz
+        self.master.mav.request_data_stream_send(
+            self.master.target_system,
+            self.master.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS,
+            50,  # 50 Hz for motor outputs
+            1,
+        )
+
+        logger.info("Requested data streams including motor outputs (SERVO_OUTPUT_RAW)")
+
     def _start_telemetry_thread(self):
         """Start background thread for receiving telemetry."""
         self.running = True
@@ -216,6 +243,33 @@ class MAVLinkInterface:
             elif msg_type == 'GPS_RAW_INT':
                 self.state['gps_fix'] = msg.fix_type
 
+            elif msg_type == 'SERVO_OUTPUT_RAW':
+                # Extract motor PWM values from ArduPilot
+                # Servos 1-4 are motors for quadcopter
+                ardupilot_pwm = np.array([
+                    msg.servo1_raw,
+                    msg.servo2_raw,
+                    msg.servo3_raw,
+                    msg.servo4_raw,
+                ], dtype=np.float32)
+
+                # Convert PWM to RPM for each motor
+                ardupilot_rpms = np.array([self.pwm_to_rpm(pwm) for pwm in ardupilot_pwm])
+
+                # Remap from ArduPilot motor order to PyBullet motor order
+                self.motor_pwm = ardupilot_pwm
+                self.motor_rpms = self.remap_motor_indices(ardupilot_rpms)
+                self.last_motor_update = time.time()
+
+                # Log for debugging (first few times only)
+                if not hasattr(self, '_motor_log_count'):
+                    self._motor_log_count = 0
+                if self._motor_log_count < 3:
+                    logger.debug(f"Motor PWM (ArduPilot): {ardupilot_pwm}")
+                    logger.debug(f"Motor RPM (ArduPilot): {ardupilot_rpms}")
+                    logger.debug(f"Motor RPM (PyBullet): {self.motor_rpms}")
+                    self._motor_log_count += 1
+
     def get_state(self) -> Dict[str, Any]:
         """
         Get current drone state.
@@ -226,25 +280,28 @@ class MAVLinkInterface:
         with self.lock:
             return self.state.copy()
 
-    def arm(self, timeout: float = 10.0) -> bool:
+    def arm(self, timeout: float = 10.0, force: bool = True) -> bool:
         """
         Arm the drone.
 
         Args:
             timeout: Timeout in seconds
+            force: Force arm (bypass pre-arm checks) - useful for SITL
 
         Returns:
             True if armed successfully, False otherwise
         """
-        logger.info("Arming drone...")
+        logger.info(f"Arming drone (force={force})...")
 
+        # First try normal arm
         self.master.mav.command_long_send(
             self.master.target_system,
             self.master.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,  # Confirmation
             1,  # Arm
-            0, 0, 0, 0, 0, 0,
+            21196 if force else 0,  # Force (magic number to bypass pre-arm checks)
+            0, 0, 0, 0, 0,
         )
 
         # Wait for arm
@@ -424,3 +481,113 @@ class MAVLinkInterface:
             True if connection is alive, False otherwise
         """
         return self.connected and (time.time() - self.last_heartbeat) < 5.0
+
+    def pwm_to_rpm(self, pwm: float) -> float:
+        """
+        Convert PWM value to motor RPM.
+
+        ArduPilot outputs PWM in range 1000-2000 μs.
+        This maps to throttle 0-100%, which maps to voltage 0-battery_voltage.
+
+        Args:
+            pwm: PWM value in microseconds (1000-2000)
+
+        Returns:
+            Motor RPM
+        """
+        # Clamp PWM to valid range
+        pwm = np.clip(pwm, 1000, 2000)
+
+        # Normalize to 0-1
+        throttle = (pwm - 1000.0) / 1000.0
+
+        # Convert to voltage
+        voltage = throttle * self.battery_voltage
+
+        # Convert to RPM using motor KV
+        rpm = self.motor_kv * voltage
+
+        return rpm
+
+    def remap_motor_indices(self, ardupilot_motors: np.ndarray) -> np.ndarray:
+        """
+        Remap motor indices from ArduPilot convention to PyBullet convention.
+
+        ArduPilot Copter (Quad X):
+          3   1      Motor numbering (1-based)
+           \ /
+            X
+           / \
+          2   4
+
+        Converted to 0-based:
+          2   0
+           \ /
+            X
+           / \
+          1   3
+
+        PyBullet (this implementation):
+          1   0
+           \ /
+            X
+           / \
+          2   3
+
+        Mapping: ArduPilot[0,1,2,3] -> PyBullet[0,3,1,2]
+        - ArduPilot Motor 0 (front-right) -> PyBullet Motor 0 (front-right) ✓
+        - ArduPilot Motor 1 (rear-left)   -> PyBullet Motor 2 (rear-left)   ✓
+        - ArduPilot Motor 2 (front-left)  -> PyBullet Motor 3 (front-left)  ✓
+        - ArduPilot Motor 3 (rear-right)  -> PyBullet Motor 1 (rear-right)  ✓
+
+        Args:
+            ardupilot_motors: Motor values in ArduPilot order
+
+        Returns:
+            Motor values in PyBullet order
+        """
+        if len(ardupilot_motors) != 4:
+            raise ValueError(f"Expected 4 motors, got {len(ardupilot_motors)}")
+
+        # Remap: [0,1,2,3] -> [0,3,1,2]
+        pybullet_motors = np.array([
+            ardupilot_motors[0],  # Front-right: AP0 -> PB0
+            ardupilot_motors[3],  # Rear-right:  AP3 -> PB1
+            ardupilot_motors[1],  # Rear-left:   AP1 -> PB2
+            ardupilot_motors[2],  # Front-left:  AP2 -> PB3
+        ])
+
+        return pybullet_motors
+
+    def get_motor_rpms(self) -> np.ndarray:
+        """
+        Get current motor RPMs from ArduPilot (remapped for PyBullet).
+
+        Returns:
+            Motor RPMs in PyBullet motor order
+        """
+        with self.lock:
+            return self.motor_rpms.copy()
+
+    def get_motor_pwm(self) -> np.ndarray:
+        """
+        Get raw PWM values from ArduPilot.
+
+        Returns:
+            Motor PWM values (1000-2000 μs)
+        """
+        with self.lock:
+            return self.motor_pwm.copy()
+
+    def has_recent_motor_data(self, max_age: float = 0.5) -> bool:
+        """
+        Check if motor data is recent.
+
+        Args:
+            max_age: Maximum age in seconds
+
+        Returns:
+            True if motor data is recent, False otherwise
+        """
+        with self.lock:
+            return (time.time() - self.last_motor_update) < max_age

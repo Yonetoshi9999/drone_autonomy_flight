@@ -8,13 +8,14 @@ Complete operational guide for running simulations, training agents, and analyzi
 
 1. [Pre-Flight Checklist](#pre-flight-checklist)
 2. [Starting the Simulation](#starting-the-simulation)
-3. [Running Different Scenarios](#running-different-scenarios)
-4. [Training RL Agents](#training-rl-agents)
-5. [Evaluating Performance](#evaluating-performance)
-6. [Monitoring and Debugging](#monitoring-and-debugging)
-7. [Data Management](#data-management)
-8. [Advanced Operations](#advanced-operations)
-9. [Troubleshooting](#troubleshooting)
+3. [Drone Model Configuration](#drone-model-configuration)
+4. [Running Different Scenarios](#running-different-scenarios)
+5. [Training RL Agents](#training-rl-agents)
+6. [Evaluating Performance](#evaluating-performance)
+7. [Monitoring and Debugging](#monitoring-and-debugging)
+8. [Data Management](#data-management)
+9. [Advanced Operations](#advanced-operations)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -119,6 +120,123 @@ sleep 10
 # Run simulation
 python scripts/training/minimal_simulation.py
 ```
+
+---
+
+## Drone Model Configuration
+
+### Available Models
+
+The simulation supports two drone models with different physics characteristics:
+
+#### 1. Medium Quadcopter (Default - Recommended)
+
+**Use Case**: ArduPilot integration, production deployment, realistic training
+
+**Specifications**:
+- **Mass**: 2.0 kg
+- **Inertia**: Ixx=0.015, Iyy=0.015, Izz=0.025 kg⋅m²
+- **Arm Length**: 0.225 m (45cm diagonal)
+- **Motor KV**: 920
+- **Max Thrust**: 80 N total (20N per motor)
+- **Frame Size**: 30cm × 30cm body
+
+**Matches**: ArduPilot master branch Mode 99 LQR controller
+
+**Usage**:
+```python
+from drone_gym.envs import PyBulletDroneEnv
+
+# Default - uses medium_quad automatically
+env = PyBulletDroneEnv(gui=True)
+
+# Explicit specification
+env = PyBulletDroneEnv(gui=True, drone_model="medium_quad")
+```
+
+#### 2. Crazyflie 2.x Nano-Drone
+
+**Use Case**: Nano-drone research, fast prototyping
+
+**Specifications**:
+- **Mass**: 0.027 kg (27 grams)
+- **Inertia**: Ixx=1.4e-5, Iyy=1.4e-5, Izz=2.17e-5 kg⋅m²
+- **Arm Length**: 0.0397 m (9cm diagonal)
+- **Max Thrust**: 0.6 N total
+- **Frame Size**: 9cm × 9cm
+
+**Usage**:
+```python
+env = PyBulletDroneEnv(gui=True, drone_model="cf2x")
+```
+
+### Comparison
+
+| Feature | Medium Quad | Crazyflie | Ratio |
+|---------|-------------|-----------|-------|
+| Mass | 2.0 kg | 0.027 kg | 74x |
+| Size | 45cm diagonal | 9cm diagonal | 5x |
+| Thrust | 80 N | 0.6 N | 133x |
+| Use Case | Production | Research | - |
+
+### Model Selection Guide
+
+**Use medium_quad when**:
+- Training for ArduPilot deployment
+- Testing Mode 99 LQR controller compatibility
+- Realistic flight dynamics needed
+- Hardware deployment planned
+
+**Use cf2x when**:
+- Nano-drone specific research
+- Fast iteration/prototyping
+- Indoor flight scenarios
+- Educational purposes
+
+### Verifying Model Configuration
+
+```python
+from drone_gym.physics.pybullet_drone import PyBulletDrone
+
+# Check current model
+drone = PyBulletDrone(drone_model="medium_quad")
+print(f"Model: {drone.drone_model}")
+print(f"Mass: {drone.mass} kg")
+print(f"Arm length: {drone.arm_length} m")
+```
+
+Expected output for medium_quad:
+```
+Model: medium_quad
+Mass: 2.0 kg
+Arm length: 0.225 m
+```
+
+### Training with Different Models
+
+When training RL agents, the model affects:
+- **Flight dynamics** - Heavier drones have more inertia
+- **Control response** - Different PD gains
+- **Training time** - Larger drones may need more episodes
+- **Policy transfer** - Only medium_quad policies transfer to ArduPilot
+
+**Example Training**:
+```bash
+# Train with medium quad (default)
+python3 examples/train_pybullet_rl.py --algorithm PPO --total-timesteps 1000000
+
+# Train with Crazyflie
+python3 examples/train_pybullet_rl.py --algorithm PPO --model cf2x --total-timesteps 500000
+```
+
+**Note**: Models trained on one drone type will NOT work on another due to different dynamics.
+
+### Documentation
+
+For detailed physics specifications and comparison with ArduPilot, see:
+- `MEDIUM_QUAD_MODEL.md` - Complete medium quadcopter specifications
+- `CRAZYFLIE_MODEL.md` - Crazyflie nano-drone details
+- `CONTROLLER_COMPARISON.md` - Controller differences vs ArduPilot
 
 ---
 
@@ -859,7 +977,7 @@ print(f"Improvement: {np.mean(model_rewards) - np.mean(random_rewards):.2f}")
 ### 1. Always Use Version Control
 ```bash
 git add configs/
-git commit -m "Updated EDU650 parameters"
+git commit -m "Updated medium quadcopter parameters"
 ```
 
 ### 2. Document Training Runs

@@ -1,0 +1,168 @@
+<?xml version="1.0" ?>
+
+<robot name="medium_quad">
+
+  <!--
+    Medium Quadcopter Model - 2.0 kg
+    Matches ArduPilot master branch LQR controller parameters
+    Based on typical racing/photography drone specifications
+  -->
+
+  <properties
+    arm="0.225"
+    kf="1.0e-5"
+    km="1.5e-7"
+    thrust2weight="2.0"
+    max_speed_kmh="80"
+    gnd_eff_coeff="11.36859"
+    prop_radius="0.127"
+    drag_coeff_xy="5.0e-4"
+    drag_coeff_z="6.5e-4"
+    dw_coeff_1="2267.18"
+    dw_coeff_2=".16"
+    dw_coeff_3="-.11"
+  />
+
+  <link name="base_link">
+
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="2.0"/>
+      <!-- Inertia values from ArduPilot sysid_params.txt -->
+      <inertia ixx="0.015" ixy="0.0" ixz="0.0" iyy="0.015" iyz="0.0" izz="0.025"/>
+    </inertial>
+
+    <!--
+      References:
+      - ArduPilot SITL typical values
+      - Medium quadcopter racing/photography drone specs
+      - Motor: ~920 KV, max 20N thrust per motor
+    -->
+
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <!-- Main body - carbon fiber frame -->
+        <box size="0.3 0.3 0.08"/>
+      </geometry>
+      <material name="carbon_fiber">
+        <color rgba="0.1 0.1 0.1 1"/>
+      </material>
+    </visual>
+
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <!-- Simplified collision shape -->
+        <cylinder radius="0.15" length="0.08"/>
+      </geometry>
+    </collision>
+
+  </link>
+
+  <!-- Motor 0: Front-Right (CW rotation) -->
+  <link name="prop0_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.159 -0.159 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.127" length="0.01"/>
+      </geometry>
+      <material name="propeller">
+        <color rgba="0.2 0.2 0.2 1"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="prop0_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop0_link"/>
+    <origin xyz="0.159 -0.159 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Motor 1: Rear-Right (CCW rotation) -->
+  <link name="prop1_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.159 -0.159 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.127" length="0.01"/>
+      </geometry>
+      <material name="propeller">
+        <color rgba="0.2 0.2 0.2 1"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="prop1_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop1_link"/>
+    <origin xyz="-0.159 -0.159 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Motor 2: Rear-Left (CW rotation) -->
+  <link name="prop2_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.159 0.159 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.127" length="0.01"/>
+      </geometry>
+      <material name="propeller">
+        <color rgba="0.2 0.2 0.2 1"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="prop2_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop2_link"/>
+    <origin xyz="-0.159 0.159 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Motor 3: Front-Left (CCW rotation) -->
+  <link name="prop3_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.159 0.159 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.127" length="0.01"/>
+      </geometry>
+      <material name="propeller">
+        <color rgba="0.2 0.2 0.2 1"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="prop3_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="prop3_link"/>
+    <origin xyz="0.159 0.159 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Center of mass marker -->
+  <link name="center_of_mass_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="center_of_mass_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="center_of_mass_link"/>
+  </joint>
+
+</robot>

@@ -2,12 +2,15 @@
 Drone Gym: OpenAI Gym Environment for Autonomous Drone Simulation
 
 This package provides a comprehensive simulation environment for autonomous
-drone development using ArduPilot SITL, AirSim, and reinforcement learning.
+drone development using ArduPilot SITL, PyBullet, and reinforcement learning.
 """
 
 __version__ = "0.1.0"
 
-from gym.envs.registration import register
+try:
+    from gymnasium.envs.registration import register
+except ImportError:
+    from gym.envs.registration import register
 
 # Register the main drone environment
 register(
@@ -30,13 +33,17 @@ register(
     max_episode_steps=2000,
 )
 
-# Import main classes for convenience
-from drone_gym.envs.drone_nav_env import DroneNavEnv
-from drone_gym.envs.drone_obstacle_env import DroneObstacleEnv
-from drone_gym.envs.drone_waypoint_env import DroneWaypointEnv
+# Register PyBullet drone environment
+register(
+    id='PyBulletDrone-v0',
+    entry_point='drone_gym.envs:PyBulletDroneEnv',
+    max_episode_steps=1000,
+)
 
+# Import main classes for convenience (lazy import to avoid dependency issues)
 __all__ = [
     'DroneNavEnv',
     'DroneObstacleEnv',
     'DroneWaypointEnv',
+    'PyBulletDroneEnv',
 ]

@@ -8,7 +8,7 @@ A comprehensive simulation environment for autonomous drone development using Ar
 - **AirSim Physics**: Realistic 3D physics and sensor simulation
 - **ROS2 Humble Support**: Robot Operating System integration
 - **OpenAI Gym Environment**: Standard RL interface
-- **Custom EDU650 Model**: 3.4kg quadcopter with custom sensors
+- **Medium Quadcopter Model**: 2.0kg quadcopter (matches ArduPilot master branch)
 - **Multiple Algorithms**: A*, RRT*, APF path planning
 - **RL Training**: Stable-Baselines3 integration with PPO/SAC/TD3
 - **Comprehensive Logging**: CSV, ROS2 bags, TensorBoard

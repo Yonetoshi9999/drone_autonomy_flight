@@ -22,7 +22,7 @@ import yaml
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import gym
+import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.callbacks import (
@@ -59,7 +59,7 @@ def make_env(env_id: str, rank: int, seed: int = 0):
     def _init():
         env = gym.make(env_id)
         env = Monitor(env)
-        env.seed(seed + rank)
+        env.reset(seed=seed + rank)
         return env
 
     return _init
@@ -255,9 +255,9 @@ def main():
     parser.add_argument(
         '--env',
         type=str,
-        default='DroneNav-v0',
-        choices=['DroneNav-v0', 'DroneObstacle-v0', 'DroneWaypoint-v0'],
-        help='Environment ID (default: DroneNav-v0)',
+        default='PyBulletDrone-v0',
+        choices=['DroneNav-v0', 'DroneObstacle-v0', 'DroneWaypoint-v0', 'PyBulletDrone-v0'],
+        help='Environment ID (default: PyBulletDrone-v0)',
     )
 
     # Training

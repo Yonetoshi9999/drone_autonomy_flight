@@ -85,49 +85,41 @@ WORKDIR /opt/ardupilot
 # Checkout stable version
 RUN git checkout Copter-4.3
 
-# Install ArduPilot prerequisites
+# Create non-root user for ArduPilot and add to dialout group
+RUN useradd -m -s /bin/bash -G dialout ardupilot && \
+    echo "ardupilot ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    chown -R ardupilot:ardupilot /opt/ardupilot
+
+# Switch to ardupilot user
+USER ardupilot
+ENV USER=ardupilot
+
+# Install ArduPilot prerequisites (now as non-root user)
 RUN Tools/environment_install/install-prereqs-ubuntu.sh -y
 
 # Build ArduPilot SITL
 RUN ./waf configure --board sitl
 RUN ./waf copter
 
+# Switch back to root for later stages
+USER root
+
 # Add ArduPilot to PATH
 ENV PATH="/opt/ardupilot/Tools/autotest:${PATH}"
 ENV PATH="/opt/ardupilot/build/sitl/bin:${PATH}"
 
 # ============================================
-# Stage: AirSim Installation
+# Stage: AirSim Installation (SKIPPED - incompatible with Ubuntu 22.04)
 # ============================================
-FROM ardupilot-base AS airsim-base
-
-# Install AirSim dependencies
-RUN apt-get update && apt-get install -y \
-    libboost-all-dev \
-    libeigen3-dev \
-    libopencv-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Clone and build AirSim
-WORKDIR /opt
-RUN git clone https://github.com/Microsoft/AirSim.git
-WORKDIR /opt/AirSim
-
-# Build AirSim
-RUN ./setup.sh
-RUN ./build.sh
-
-# Build AirSim Python API
-WORKDIR /opt/AirSim/PythonClient
-RUN pip3 install -e .
-
-# Set AirSim environment variables
-ENV AIRSIM_ROOT=/opt/AirSim
+# AirSim setup requires outdated dependencies (clang-8) not available in Ubuntu 22.04
+# Skip AirSim for now - can be added later or use alternative simulators
+# FROM ardupilot-base AS airsim-base
+# ...
 
 # ============================================
 # Stage: Python ML Environment
 # ============================================
-FROM airsim-base AS ml-base
+FROM ardupilot-base AS ml-base
 
 # Install Python ML dependencies
 RUN apt-get update && apt-get install -y \
@@ -140,13 +132,13 @@ RUN apt-get update && apt-get install -y \
 RUN pip3 install --upgrade pip setuptools wheel
 
 # Install PyTorch (CPU version for minimal setup, can be changed to GPU)
-RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+RUN pip3 install --ignore-installed sympy torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Copy requirements file
 COPY requirements.txt /tmp/requirements.txt
 
-# Install Python packages
-RUN pip3 install -r /tmp/requirements.txt
+# Install Python packages (use --ignore-installed to avoid conflicts with system packages)
+RUN pip3 install --ignore-installed -r /tmp/requirements.txt
 
 # ============================================
 # Stage: Final Development Environment

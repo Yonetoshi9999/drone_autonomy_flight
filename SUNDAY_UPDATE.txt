@@ -1,0 +1,139 @@
+=================================================================
+SUNDAY EVENING UPDATE - 5M Training Recovery!
+=================================================================
+
+Date: 2026-02-15 (Sunday Evening)
+Status: GREAT NEWS - Training Recovered!
+
+=================================================================
+IMPORTANT: 5M TRAINING IS WORKING NOW!
+=================================================================
+
+Latest Status (819k / 5M timesteps, 10.5 hours):
+
+  Reward: 22.3 ✅ (was -132, now improving!)
+  Episode Length: 199 steps
+  FPS: 21 (slow but stable)
+
+ANALYSIS: Training went through rough patch but recovered!
+
+Progress Timeline:
+  - 600k steps: -132 reward (terrible)
+  - 760k steps: -114 reward (still bad)
+  - 819k steps: +22.3 reward (RECOVERED!) ✅
+
+=================================================================
+REVISED RECOMMENDATION FOR MONDAY
+=================================================================
+
+ORIGINAL PLAN: Stop training and restart from 1M model
+NEW PLAN: LET IT CONTINUE! ⭐
+
+Reasoning:
+  - Training recovered from bad phase (-132 → +22.3)
+  - Currently at 16% complete (819k / 5M)
+  - Trajectory is now positive
+  - Should reach 1M model performance (39.4) soon
+  - Could exceed expectations at 5M
+
+Expected Completion:
+  - Current pace: ~60 hours total (2.5 days)
+  - Should finish: Tuesday morning
+  - Alternative: Check Monday morning, evaluate at 1M checkpoint
+
+=================================================================
+MONDAY DECISION POINT
+=================================================================
+
+Check training at 1M checkpoint (Monday morning):
+
+Option A: If reward > 30 at 1M
+  → Let training continue to 5M
+  → Expect final reward 60-80
+
+Option B: If reward < 20 at 1M
+  → Stop and use original 1M model
+  → Restart with different parameters
+
+Most Likely: Option A (training is recovering well)
+
+=================================================================
+WHAT YOU HAVE FOR MONDAY
+=================================================================
+
+1. WORKING 1M MODEL (Backup Plan)
+   Location: ppo_PyBulletDrone-v0_20260214_174923/best_model/
+   Performance: 39.4 reward, 25% success
+   Status: SAFE FALLBACK
+
+2. 5M TRAINING (Now Looking Good!)
+   Progress: 819k / 5M (16%)
+   Performance: 22.3 reward (recovering)
+   Status: CONTINUE RUNNING
+   Expected: Tuesday completion
+
+3. MODE 99 (Ready for Hardware)
+   Location: ~/ardupilot/ArduCopter/mode_smartphoto99.*
+   Status: COMPILED, READY TO TEST
+
+=================================================================
+MONDAY MORNING CHECKLIST
+=================================================================
+
+Step 1: Check if training still running
+  docker ps | grep drone_sim
+
+Step 2: Check current progress
+  docker exec drone_sim tail -20 /workspace/data/training_5M_output.log
+
+Step 3: Decision
+  - If training stopped: Use 1M model or restart
+  - If reward > 30: Let it continue to 5M
+  - If reward stuck < 20: Stop and restart
+
+Step 4: Monitor in TensorBoard
+  http://localhost:6006
+
+=================================================================
+KEY FILES FOR MONDAY
+=================================================================
+
+START HERE:
+  1. START_HERE_MONDAY.txt (overview)
+  2. WEEKEND_STATUS_REPORT.md (detailed status)
+  3. SUNDAY_UPDATE.txt (this file - latest news!)
+
+TRAINING LOGS:
+  - /workspace/data/training_5M_output.log
+  - http://localhost:6006 (TensorBoard)
+
+MODELS:
+  - 1M backup: ppo_PyBulletDrone-v0_20260214_174923/
+  - 5M current: ppo_PyBulletDrone-v0_20260214_191830/
+
+=================================================================
+SUMMARY - GOOD NEWS FOR WEEKEND!
+=================================================================
+
+Initial Assessment (Saturday): Training failing, reward -132
+Updated Assessment (Sunday): Training recovered, reward +22.3
+
+Grade: Changed from D- to B- (improving trend!)
+
+Saturday Plan: Stop and restart from 1M
+Sunday Plan: Let it continue, check Monday morning
+
+Training went through difficult phase but is now learning.
+This is normal for RL - explore bad strategies first, then improve.
+
+Expected Monday: Training should be at ~1.2M steps, reward ~40+
+Expected Tuesday: Training completes at 5M, reward 60-80 (target)
+
+=================================================================
+
+Have a great rest of your weekend!
+The training is working - just needs time.
+
+See you Monday! 🚁
+
+=================================================================
