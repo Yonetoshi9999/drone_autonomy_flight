@@ -1,0 +1,49 @@
+{
+  "mission_name": "Simple Waypoint Navigation (No Obstacles)",
+  "description": "Basic 4-waypoint square pattern at 50m altitude",
+  "altitude_constraint": 40.0,
+  "waypoints": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0, -50.0],
+      "velocity": [2.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 2.0,
+      "description": "Start position"
+    },
+    {
+      "id": 2,
+      "position": [30.0, 0.0, -50.0],
+      "velocity": [0.0, 2.0, 0.0],
+      "yaw": 1.5708,
+      "hold_time": 2.0,
+      "description": "North 30m"
+    },
+    {
+      "id": 3,
+      "position": [30.0, 30.0, -50.0],
+      "velocity": [-2.0, 0.0, 0.0],
+      "yaw": 3.1416,
+      "hold_time": 2.0,
+      "description": "North 30m, East 30m"
+    },
+    {
+      "id": 4,
+      "position": [0.0, 30.0, -50.0],
+      "velocity": [0.0, -2.0, 0.0],
+      "yaw": -1.5708,
+      "hold_time": 2.0,
+      "description": "East 30m"
+    },
+    {
+      "id": 5,
+      "position": [0.0, 0.0, -50.0],
+      "velocity": [0.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 5.0,
+      "description": "Return home"
+    }
+  ],
+  "obstacles": [],
+  "notes": "Baseline test - no obstacles"
+}

@@ -1,0 +1,85 @@
+{
+  "mission_name": "Complex Obstacle Field",
+  "description": "Dense obstacle field requiring multiple avoidance maneuvers",
+  "altitude_constraint": 40.0,
+  "waypoints": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0, -50.0],
+      "velocity": [2.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 2.0
+    },
+    {
+      "id": 2,
+      "position": [50.0, 0.0, -50.0],
+      "velocity": [0.0, 2.0, 0.0],
+      "yaw": 1.5708,
+      "hold_time": 2.0
+    },
+    {
+      "id": 3,
+      "position": [50.0, 50.0, -50.0],
+      "velocity": [0.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 3.0
+    }
+  ],
+  "obstacles": [
+    {
+      "id": 1,
+      "type": "cylinder",
+      "position": [10.0, 0.0, -45.0],
+      "radius": 2.0,
+      "height": 12.0,
+      "description": "Obstacle 1"
+    },
+    {
+      "id": 2,
+      "type": "cylinder",
+      "position": [20.0, 3.0, -47.0],
+      "radius": 2.5,
+      "height": 10.0,
+      "description": "Obstacle 2"
+    },
+    {
+      "id": 3,
+      "type": "cylinder",
+      "position": [30.0, -2.0, -46.0],
+      "radius": 2.0,
+      "height": 11.0,
+      "description": "Obstacle 3"
+    },
+    {
+      "id": 4,
+      "type": "sphere",
+      "position": [40.0, 2.0, -50.0],
+      "radius": 3.0,
+      "description": "Obstacle 4"
+    },
+    {
+      "id": 5,
+      "type": "cylinder",
+      "position": [50.0, 15.0, -48.0],
+      "radius": 2.5,
+      "height": 8.0,
+      "description": "Obstacle 5"
+    },
+    {
+      "id": 6,
+      "type": "cylinder",
+      "position": [50.0, 30.0, -45.0],
+      "radius": 2.0,
+      "height": 12.0,
+      "description": "Obstacle 6"
+    },
+    {
+      "id": 7,
+      "type": "sphere",
+      "position": [50.0, 42.0, -52.0],
+      "radius": 2.5,
+      "description": "Obstacle 7"
+    }
+  ],
+  "notes": "Challenging scenario with 7 obstacles. Tests repeated avoidance, replanning, and return-to-path logic."
+}

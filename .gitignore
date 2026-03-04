@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -80,3 +81,12 @@ Documents/AirSim/
 wandb/
 tensorboard/
 mlruns/
+=======
+.local/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.local/
+.cache/
+__pycache__/
+>>>>>>> 74e4cbb311d6507a0cb905c6d4851f53cc4aab1d

@@ -1,0 +1,58 @@
+{
+  "mission_name": "Narrow Passage Navigation",
+  "description": "Navigate through narrow passages between obstacles",
+  "altitude_constraint": 40.0,
+  "waypoints": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0, -50.0],
+      "velocity": [2.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 2.0,
+      "description": "Start"
+    },
+    {
+      "id": 2,
+      "position": [50.0, 0.0, -50.0],
+      "velocity": [0.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 3.0,
+      "description": "Through passages to goal"
+    }
+  ],
+  "obstacles": [
+    {
+      "id": 1,
+      "type": "cylinder",
+      "position": [15.0, -4.0, -45.0],
+      "radius": 2.0,
+      "height": 15.0,
+      "description": "First gate - left side"
+    },
+    {
+      "id": 2,
+      "type": "cylinder",
+      "position": [15.0, 4.0, -45.0],
+      "radius": 2.0,
+      "height": 15.0,
+      "description": "First gate - right side (8m passage)"
+    },
+    {
+      "id": 3,
+      "type": "cylinder",
+      "position": [30.0, -5.0, -45.0],
+      "radius": 2.5,
+      "height": 15.0,
+      "description": "Second gate - left side"
+    },
+    {
+      "id": 4,
+      "type": "cylinder",
+      "position": [30.0, 5.0, -45.0],
+      "radius": 2.5,
+      "height": 15.0,
+      "description": "Second gate - right side (10m passage)"
+    }
+  ],
+  "notes": "Tests precision navigation through constrained spaces. Passages are 8-10m wide - should be safe but requires good planning."
+}

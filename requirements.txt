@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Core Dependencies
 numpy>=1.21.0,<2.0.0
 scipy>=1.7.0,<1.14.0
@@ -66,3 +67,9 @@ dash>=2.3.0
 
 # Performance
 numba>=0.55.0
+=======
+# ~/aerial_photography_drone/requirements.txt に追加
+requests>=2.28.0
+shapely>=2.0.0
+scipy>=1.9.0
+>>>>>>> 74e4cbb311d6507a0cb905c6d4851f53cc4aab1d

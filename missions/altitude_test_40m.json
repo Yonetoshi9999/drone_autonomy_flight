@@ -1,0 +1,56 @@
+{
+  "mission_name": "40m Altitude Constraint Test",
+  "description": "Test new 40m minimum altitude constraint",
+  "altitude_constraint": 40.0,
+  "waypoints": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0, -50.0],
+      "velocity": [1.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 2.0,
+      "description": "Start at 50m (valid)"
+    },
+    {
+      "id": 2,
+      "position": [20.0, 0.0, -45.0],
+      "velocity": [1.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 2.0,
+      "description": "Descend to 45m (valid)"
+    },
+    {
+      "id": 3,
+      "position": [40.0, 0.0, -30.0],
+      "velocity": [1.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 2.0,
+      "description": "Try 30m - SHOULD BE CLAMPED TO 40m"
+    },
+    {
+      "id": 4,
+      "position": [60.0, 0.0, -25.0],
+      "velocity": [1.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 2.0,
+      "description": "Try 25m - SHOULD BE CLAMPED TO 40m"
+    },
+    {
+      "id": 5,
+      "position": [80.0, 0.0, -50.0],
+      "velocity": [0.0, 0.0, 0.0],
+      "yaw": 0.0,
+      "hold_time": 3.0,
+      "description": "Back to 50m (valid)"
+    }
+  ],
+  "obstacles": [],
+  "expected_behavior": [
+    "WP1: Reaches 50m altitude ✓",
+    "WP2: Reaches 45m altitude ✓",
+    "WP3: Constraint triggers - stays at 40m (prints: 高度制約適用)",
+    "WP4: Constraint triggers - stays at 40m (prints: 高度制約適用)",
+    "WP5: Climbs back to 50m ✓"
+  ],
+  "notes": "Tests the new 40m altitude constraint. Waypoints 3 and 4 should be clamped to 40m."
+}

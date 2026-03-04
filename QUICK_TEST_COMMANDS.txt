@@ -1,0 +1,61 @@
+═══════════════════════════════════════════════════════════════════
+🚀 QUICK TEST COMMANDS - Copy & Paste Ready
+═══════════════════════════════════════════════════════════════════
+
+📍 TERMINAL 1: Launch SITL (Do this FIRST)
+───────────────────────────────────────────────────────────────────
+cd /home/yonetoshi27/ardupilot/ArduCopter && ../Tools/autotest/sim_vehicle.py -v ArduCopter --console --map
+
+
+⏳ WAIT FOR: "EKF2 IMU0 is using GPS" message (~30-60 seconds)
+
+
+📍 TERMINAL 2: Run Tests (After SITL is ready)
+───────────────────────────────────────────────────────────────────
+
+Test 1: Simple Waypoints (Baseline - 2 min)
+───────────────────────────────────────────────────────────────────
+cd /home/yonetoshi27/aerial_photography_drone && python3 test_mission.py --mission simple_waypoints.json
+
+
+Test 2: Altitude Constraint ⭐ IMPORTANT (2 min)
+───────────────────────────────────────────────────────────────────
+cd /home/yonetoshi27/aerial_photography_drone && python3 test_mission.py --mission altitude_test_40m.json
+
+👀 WATCH FOR: "高度制約適用: 40.0m以上を維持" (2 times)
+
+
+Test 3: Static Obstacles (3 min)
+───────────────────────────────────────────────────────────────────
+cd /home/yonetoshi27/aerial_photography_drone && python3 test_mission.py --mission static_obstacles.json
+
+
+Test 4: Narrow Passage (2 min)
+───────────────────────────────────────────────────────────────────
+cd /home/yonetoshi27/aerial_photography_drone && python3 test_mission.py --mission narrow_passage.json
+
+
+Test 5: Complex Obstacles (4 min)
+───────────────────────────────────────────────────────────────────
+cd /home/yonetoshi27/aerial_photography_drone && python3 test_mission.py --mission complex_obstacles.json
+
+
+═══════════════════════════════════════════════════════════════════
+💡 TIPS
+═══════════════════════════════════════════════════════════════════
+
+• Run tests in order (1 → 2 → 3 → 4 → 5)
+• Wait 5 seconds after mission ends before starting next
+• Test 2 is KEY - validates your altitude constraint!
+• Press Ctrl+C to cancel mission at any time
+
+═══════════════════════════════════════════════════════════════════
+⚠️ EMERGENCY STOP
+═══════════════════════════════════════════════════════════════════
+
+In Terminal 2: Press Ctrl+C
+In Terminal 1: Type "mode LAND" and press Enter
+
+═══════════════════════════════════════════════════════════════════
+✅ After successful tests → Ready for RL training! 🤖
+═══════════════════════════════════════════════════════════════════
