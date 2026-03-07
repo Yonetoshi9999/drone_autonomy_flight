@@ -42,13 +42,29 @@ class ArduPilotMode99Env(gym.Env):
         - Crash penalty: -1000
         - Energy penalty: -0.01 * ||velocity||
         - Smoothness penalty: -0.05 * ||action_delta||
+
+    Obstacle simulation:
+        Virtual box obstacles are placed in NED space each episode.
+        6-direction LiDAR distances are computed geometrically from drone position.
+        This replicates the RPi's physical LiDAR output at runtime.
     """
 
     metadata = {'render.modes': ['human']}
 
+    # 6-direction LiDAR rays in NED frame: front(+N), back(-N), right(+E), left(-E), up(-D), down(+D)
+    _LIDAR_DIRS = np.array([
+        [1, 0, 0],   # front (+N)
+        [-1, 0, 0],  # back  (-N)
+        [0, 1, 0],   # right (+E)
+        [0, -1, 0],  # left  (-E)
+        [0, 0, -1],  # up    (-D)
+        [0, 0, 1],   # down  (+D)
+    ], dtype=np.float32)
+    _LIDAR_RANGE = 10.0  # meters, max sensing range
+
     def __init__(
         self,
-        sitl_connection: str = 'tcp:127.0.0.1:5762',
+        sitl_connection: str = 'tcp:127.0.0.1:5760',
         mission_type: str = 'obstacle_avoidance',
         max_steps: int = 1000,
         goal_radius: float = 1.0,
@@ -75,11 +91,12 @@ class ArduPilotMode99Env(gym.Env):
         self.time_scale = time_scale
         self.enable_obstacles = enable_obstacles
 
-        # State space: 25D continuous
+        # State space: 26D continuous
+        # pos(3) + vel(3) + att(3) + rates(3) + battery(1) + gps(4) + obstacles(6) + goal_rel(3)
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(25,),
+            shape=(26,),
             dtype=np.float32
         )
 
@@ -113,15 +130,22 @@ class ArduPilotMode99Env(gym.Env):
             'gps': np.zeros(4),
             'obstacles': np.full(6, 10.0),  # Initialize with safe distances
             'armed': False,
-            'mode': 0
+            'mode': 0,
+            'lqi_diag': {}  # LQI diagnostics from NAMED_VALUE_FLOAT (LQI_Thrust, EKF_pD, etc.)
         }
+
+        # Mode 99 initial reference position (set during reset)
+        self._mode99_ref = np.zeros(3)
+
+        # Virtual obstacles for this episode: list of (center, half_size) in NED (meters)
+        self._obstacles: list = []
 
     def connect(self):
         """Connect to ArduPilot SITL via MAVLink"""
         print(f"Connecting to ArduPilot SITL: {self.sitl_connection}")
         self.mav = mavutil.mavlink_connection(
             self.sitl_connection,
-            source_system=1
+            source_system=255
         )
 
         # Wait for heartbeat
@@ -134,12 +158,29 @@ class ArduPilotMode99Env(gym.Env):
 
     def request_data_streams(self):
         """Request telemetry data streams at specified rates"""
+        # Position data (LOCAL_POSITION_NED) at 10Hz
         self.mav.mav.request_data_stream_send(
             self.mav.target_system,
             self.mav.target_component,
-            mavutil.mavlink.MAV_DATA_STREAM_ALL,
-            10,  # 10Hz
-            1    # Enable
+            mavutil.mavlink.MAV_DATA_STREAM_POSITION,
+            10,
+            1
+        )
+        # Extended status (GPS_RAW_INT, SYS_STATUS) at 5Hz
+        self.mav.mav.request_data_stream_send(
+            self.mav.target_system,
+            self.mav.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_EXTENDED_STATUS,
+            5,
+            1
+        )
+        # Attitude (ATTITUDE) at 50Hz
+        self.mav.mav.request_data_stream_send(
+            self.mav.target_system,
+            self.mav.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_EXTRA1,
+            50,
+            1
         )
 
     def reset(
@@ -148,7 +189,17 @@ class ArduPilotMode99Env(gym.Env):
         options: Optional[Dict[str, Any]] = None
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         """
-        Reset environment to initial state
+        Reset environment to initial state.
+
+        Startup sequence mirrors companion_mode99.py:
+          1. Disable ARMING_CHECK
+          2. Set GUIDED mode (while disarmed — lenient EKF check)
+          3. Wait for GPS fix + EKF convergence
+          4. Arm (force, magic 2989)
+          5. Takeoff to 5m in GUIDED
+          6. Switch to Mode 99
+          7. Capture M99_REF_* initial reference from flight controller
+          8. Begin sending 20Hz commands
 
         Returns:
             observation: Initial state
@@ -163,11 +214,10 @@ class ArduPilotMode99Env(gym.Env):
 
         # Set random goal position (within bounds)
         if self.mission_type == 'obstacle_avoidance':
-            # Goal in front with some randomness
             self.goal_position = np.array([
-                np.random.uniform(20, 50),   # 20-50m north
-                np.random.uniform(-10, 10),  # ±10m east
-                -np.random.uniform(5, 15)    # 5-15m altitude (NED: negative)
+                np.random.uniform(20, 50),
+                np.random.uniform(-10, 10),
+                -np.random.uniform(5, 15)
             ])
         else:  # waypoint_navigation
             self.goal_position = np.array([
@@ -176,28 +226,123 @@ class ArduPilotMode99Env(gym.Env):
                 -np.random.uniform(5, 20)
             ])
 
-        # Reset to stabilize mode and disarm
-        self.set_mode('STABILIZE')
-        time.sleep(0.5)
+        # Generate virtual obstacles for this episode
+        self._obstacles = []
+        if self.enable_obstacles:
+            num_obstacles = self.np_random.integers(3, 9)
+            for _ in range(num_obstacles):
+                self._obstacles.append(self._sample_obstacle())
 
-        # Disarm if armed
+        # Disarm if currently armed
         if self.telemetry['armed']:
             self.disarm()
             time.sleep(1.0)
 
-        # Arm and takeoff
-        self.arm()
-        time.sleep(1.0)
-        self.set_mode('SMART_PHOTO')  # Switch to Mode 99
-        time.sleep(0.5)
-        self.takeoff(10.0)  # Takeoff to 10m
-        time.sleep(5.0)  # Wait for stable hover
+        # Step 1: Disable pre-arm checks
+        self.mav.mav.param_set_send(
+            self.mav.target_system, self.mav.target_component,
+            b'ARMING_CHECK', 0,
+            mavutil.mavlink.MAV_PARAM_TYPE_INT32
+        )
+        ack_deadline = time.time() + 3.0
+        while time.time() < ack_deadline:
+            msg = self.mav.recv_match(blocking=True, timeout=0.2)
+            if msg and msg.get_type() == 'PARAM_VALUE':
+                if msg.param_id.strip('\x00') == 'ARMING_CHECK':
+                    break
 
-        # Update telemetry
+        # Step 2: Switch to GUIDED while disarmed
+        self.set_mode('GUIDED')
+        time.sleep(0.3)
+
+        # Step 3: Wait for GPS fix + EKF convergence (up to 40s)
+        print("  Waiting for GPS fix + EKF convergence...")
+        ekf_deadline = time.time() + 40.0
+        gps_ok = False
+        ekf_ok = False
+        while time.time() < ekf_deadline and not (gps_ok and ekf_ok):
+            msg = self.mav.recv_match(blocking=True, timeout=0.5)
+            if msg is None:
+                continue
+            mt = msg.get_type()
+            if mt == 'GPS_RAW_INT' and msg.fix_type >= 3 and msg.satellites_visible >= 6:
+                gps_ok = True
+            elif mt == 'EKF_STATUS_REPORT':
+                has_vel = bool(msg.flags & 0x002)
+                has_pos = bool(msg.flags & 0x010)
+                has_pred = bool(msg.flags & 0x200)
+                const_pos = bool(msg.flags & 0x080)
+                if gps_ok and has_vel and (has_pos or has_pred) and not const_pos:
+                    ekf_ok = True
+
+        if not gps_ok:
+            print("  WARNING: GPS fix not confirmed, proceeding anyway")
+        if not ekf_ok:
+            print("  WARNING: EKF not validated, proceeding anyway")
+
+        # Step 4: Arm (force arm, magic 2989)
+        self.arm()
+        time.sleep(0.5)
+
+        # Step 5: Takeoff to 5m in GUIDED
+        self.takeoff(5.0)
+        t_takeoff = time.time()
+        fallback_pos = None
+        while time.time() - t_takeoff < 20.0:
+            self.update_telemetry()
+            alt = -self.telemetry['position'][2]
+            if alt >= 4.5:
+                fallback_pos = self.telemetry['position'].copy()
+                print(f"  Takeoff complete at {alt:.2f}m")
+                break
+            time.sleep(0.5)
+
+        # Step 6: Switch to Mode 99
+        self.mav.mav.set_mode_send(
+            self.mav.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            99
+        )
+
+        # Step 7: Capture M99_REF_* initial reference (Mode 99 broadcasts at 1Hz)
+        # Mode 99 companion timeout = 12s, so we have time
+        ref_n, ref_e, ref_d = None, None, None
+        mode99_ok = False
+        ref_deadline = time.time() + 10.0
+        print("  Waiting for Mode 99 + M99_REF_* reference...")
+        while time.time() < ref_deadline:
+            if mode99_ok and ref_n is not None and ref_e is not None and ref_d is not None:
+                break
+            msg = self.mav.recv_match(blocking=True, timeout=0.1)
+            if msg is None:
+                continue
+            mt = msg.get_type()
+            if mt == 'HEARTBEAT' and msg.get_srcSystem() == self.mav.target_system:
+                if msg.custom_mode == 99:
+                    mode99_ok = True
+            elif mt == 'NAMED_VALUE_FLOAT':
+                name = msg.name.rstrip('\x00')
+                if name == 'M99_REF_N':
+                    ref_n = msg.value
+                elif name == 'M99_REF_E':
+                    ref_e = msg.value
+                elif name == 'M99_REF_D':
+                    ref_d = msg.value
+
+        # Fall back to last known position if M99_REF not received
+        if None in (ref_n, ref_e, ref_d):
+            print("  WARNING: M99_REF not received, using fallback position")
+            p = fallback_pos if fallback_pos is not None else np.zeros(3)
+            ref_n, ref_e, ref_d = float(p[0]), float(p[1]), float(p[2])
+
+        # Store Mode 99 reference so step() can use it
+        self._mode99_ref = np.array([ref_n, ref_e, ref_d], dtype=np.float32)
+        print(f"  Mode 99 reference: N={ref_n:.2f} E={ref_e:.2f} D={ref_d:.2f} (alt={-ref_d:.2f}m)")
+
+        # Update telemetry and start position
         self.update_telemetry()
         self.start_position = self.telemetry['position'].copy()
 
-        # Get initial observation
         obs = self.get_observation()
         info = self.get_info()
 
@@ -260,6 +405,9 @@ class ArduPilotMode99Env(gym.Env):
         Returns:
             25D observation vector
         """
+        # Compute virtual LiDAR distances from current drone position
+        self.telemetry['obstacles'] = self._compute_obstacle_distances()
+
         # Goal relative position
         goal_relative = self.goal_position - self.telemetry['position']
 
@@ -350,6 +498,73 @@ class ArduPilotMode99Env(gym.Env):
             'velocity': self.telemetry['velocity'].copy()
         }
 
+    def _sample_obstacle(self) -> tuple:
+        """
+        Sample a random vertical-column box obstacle in NED space.
+
+        Obstacles are placed between the start and goal, spanning the full
+        altitude range the drone might fly through (0–20m, i.e. D=0 to D=-20).
+
+        Returns:
+            (center, half_size) both as np.ndarray[3] in NED meters
+        """
+        if self.mission_type == 'obstacle_avoidance':
+            goal_n = self.goal_position[0]
+            n = float(self.np_random.uniform(5.0, max(goal_n - 5.0, 6.0)))
+            e = float(self.np_random.uniform(-8.0, 8.0))
+        else:
+            n = float(self.np_random.uniform(-45.0, 45.0))
+            e = float(self.np_random.uniform(-45.0, 45.0))
+        # Vertical column: center at 10m altitude (D=-10), spans D=0 to D=-20
+        center = np.array([n, e, -10.0], dtype=np.float32)
+        half_size = np.array([1.0, 1.0, 10.0], dtype=np.float32)
+        return center, half_size
+
+    def _compute_obstacle_distances(self) -> np.ndarray:
+        """
+        Cast 6 rays from current drone position and return distances to the
+        nearest virtual obstacle surface in each direction.
+
+        Returns:
+            distances[6]: [front, back, right, left, up, down], capped at _LIDAR_RANGE
+        """
+        pos = self.telemetry['position']
+        dists = np.full(6, self._LIDAR_RANGE, dtype=np.float32)
+        for center, half_size in self._obstacles:
+            box_min = center - half_size
+            box_max = center + half_size
+            for i, direction in enumerate(self._LIDAR_DIRS):
+                d = self._ray_aabb_dist(pos, direction, box_min, box_max)
+                if d < dists[i]:
+                    dists[i] = d
+        return dists
+
+    @staticmethod
+    def _ray_aabb_dist(origin: np.ndarray, direction: np.ndarray,
+                       box_min: np.ndarray, box_max: np.ndarray) -> float:
+        """
+        Ray-AABB intersection distance.
+
+        Returns 0.0 if origin is inside the box (collision),
+        inf if ray misses the box entirely, otherwise the entry distance.
+        """
+        t_min = -np.inf
+        t_max = np.inf
+        for i in range(3):
+            if abs(direction[i]) < 1e-10:
+                if origin[i] < box_min[i] or origin[i] > box_max[i]:
+                    return np.inf
+            else:
+                t1 = (box_min[i] - origin[i]) / direction[i]
+                t2 = (box_max[i] - origin[i]) / direction[i]
+                t_min = max(t_min, min(t1, t2))
+                t_max = min(t_max, max(t1, t2))
+        if t_min > t_max or t_max < 0:
+            return np.inf
+        if t_min < 0:
+            return 0.0  # Origin inside box = collision
+        return float(t_min)
+
     def update_telemetry(self):
         """Update telemetry from MAVLink messages"""
         # Receive all pending messages
@@ -380,10 +595,13 @@ class ArduPilotMode99Env(gym.Env):
                 ])
 
             elif msg_type == 'HEARTBEAT':
-                self.telemetry['armed'] = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+                self.telemetry['armed'] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                 self.telemetry['mode'] = msg.custom_mode
 
-            # TODO: Add obstacle detection from DISTANCE_SENSOR messages
+            elif msg_type == 'NAMED_VALUE_FLOAT':
+                name = msg.name.rstrip('\x00')
+                if name in ('LQI_Thrust', 'EKF_pD', 'REF_pD', 'ERR_pD', 'ERR_vD', 'THR_out'):
+                    self.telemetry['lqi_diag'][name] = msg.value
 
     def send_position_target(
         self,
@@ -393,39 +611,52 @@ class ArduPilotMode99Env(gym.Env):
         yaw_rate: float = 0.0
     ):
         """
-        Send position/velocity target to Mode 99
+        Send position/velocity target to Mode 99.
 
         Args:
             position: Target position [x, y, z] in NED (meters)
             velocity: Target velocity [vx, vy, vz] in NED (m/s) (optional)
-            yaw: Target yaw (radians)
+            yaw: Target yaw (radians) — ignored by Mode 99 (use yaw_rate instead)
             yaw_rate: Target yaw rate (rad/s)
         """
         if velocity is None:
             velocity = np.zeros(3)
 
-        # Type mask: enable position, velocity, yaw_rate
-        # Bit 0-2: position, Bit 3-5: velocity, Bit 10: yaw, Bit 11: yaw_rate
-        type_mask = 0b0000111111000111
+        # Type mask: use pos + vel + yaw_rate; ignore yaw and acceleration
+        # bit 6,7,8 = ignore acc_x/y/z, bit 10 = ignore yaw (use yaw_rate via bit 11=0)
+        type_mask = 0b0000_0101_1100_0000  # 0x05C0
 
         self.mav.mav.set_position_target_local_ned_send(
-            0,  # time_boot_ms (not used)
+            0,  # time_boot_ms
             self.mav.target_system,
             self.mav.target_component,
             mavutil.mavlink.MAV_FRAME_LOCAL_NED,
             type_mask,
-            position[0], position[1], position[2],  # x, y, z
-            velocity[0], velocity[1], velocity[2],  # vx, vy, vz
-            0, 0, 0,  # afx, afy, afz (not used)
+            position[0], position[1], position[2],  # x, y, z (NED, meters)
+            velocity[0], velocity[1], velocity[2],  # vx, vy, vz (NED, m/s)
+            0.0, 0.0, 0.0,                          # acceleration (ignored)
             yaw,
             yaw_rate
         )
 
     def arm(self):
-        """Arm the copter"""
-        self.mav.arducopter_arm()
-        self.mav.motors_armed_wait()
-        print("✅ Armed")
+        """Arm the copter (force arm, magic 2989 matches companion_mode99.py)"""
+        self.mav.mav.command_long_send(
+            self.mav.target_system, self.mav.target_component,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            0, 1, 2989, 0, 0, 0, 0, 0
+        )
+        arm_deadline = time.time() + 8.0
+        while time.time() < arm_deadline:
+            msg = self.mav.recv_match(blocking=True, timeout=0.2)
+            if msg is None:
+                continue
+            if msg.get_type() == 'HEARTBEAT':
+                if msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
+                    self.telemetry['armed'] = True
+                    print("✅ Armed")
+                    return
+        print("⚠️ Arm timeout")
 
     def disarm(self):
         """Disarm the copter"""
@@ -471,7 +702,7 @@ if __name__ == '__main__':
     print("Make sure SITL is running: ./Tools/autotest/sim_vehicle.py -v ArduCopter")
 
     env = ArduPilotMode99Env(
-        sitl_connection='tcp:127.0.0.1:5762',
+        sitl_connection='tcp:127.0.0.1:5760',
         mission_type='obstacle_avoidance',
         max_steps=500
     )

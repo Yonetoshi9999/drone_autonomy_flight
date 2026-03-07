@@ -2,7 +2,7 @@
 
 **Simple guide to execute the autonomous drone simulation from start to finish.**
 
-> **New in v0.1.0:** This project now uses **PyBullet** as the primary physics simulator for fast RL training. ArduPilot SITL is optional for advanced testing. See the comparison table at the end for details.
+> **Current architecture (v0.2.0):** RL training uses **ArduPilot SITL + Mode 99 LQR** as the primary path. Mode 99 provides a 100 Hz LQI inner control loop that the RL agent sends position targets to — the same control law used on real hardware. PyBullet standalone is still available for physics-only experiments but is not the primary training path.
 
 ---
 
@@ -104,59 +104,56 @@ abc123...      autonomous_drone_sim     Up 5 seconds
 
 This project supports **two simulation backends**. Choose based on your needs:
 
-### 🚀 Mode A: PyBullet (Recommended)
-**Best for:** RL training, fast iteration, beginners
+### 🎯 Mode A: ArduPilot SITL + Mode 99 (Primary — RL Training)
+**Best for:** RL training, hardware deployment prep
 
 **Advantages:**
-- ✅ Fast training (3-5x faster than SITL)
-- ✅ Easy setup (no external dependencies)
-- ✅ Works on any platform
-- ✅ Multiple parallel environments
-- ✅ Integrated with Stable-Baselines3
+- ✅ Mode 99 LQI (100 Hz) in the loop — policy transfers directly to hardware
+- ✅ Obstacle simulation via virtual 6-direction LiDAR (same format as RPi LiDAR)
+- ✅ SITL at 5× speedup — fast enough for practical training
+- ✅ Complete MAVLink protocol testing
 
 **Use when:**
-- Training RL agents
-- Rapid prototyping
-- Learning drone control
-- Batch experiments
+- Training RL agents for real flight deployment
+- Validating position tracking and obstacle avoidance
+- Preparing for hardware deployment
 
 **Go to:** Step 3A below
 
-### 🎯 Mode B: ArduPilot SITL + PyBullet (Advanced)
-**Best for:** Realistic testing, validation, hardware deployment prep
+### 🚀 Mode B: PyBullet Only (Physics experiments)
+**Best for:** Physics model validation, rapid prototyping without SITL
 
 **Advantages:**
-- ✅ Realistic flight controller behavior
-- ✅ MAVLink protocol testing
-- ✅ PID tuning validation
-- ✅ Pre-deployment verification
+- ✅ Very fast (100+ FPS, multiple parallel envs)
+- ✅ No ArduPilot dependency
+
+**Limitation:**
+- ⚠️ Does NOT include Mode 99 LQR — policy will not transfer directly to hardware
+- ⚠️ PD controller dynamics differ from real drone
 
 **Use when:**
-- Validating RL policies on realistic physics
-- Testing MAVLink integration
-- Preparing for hardware deployment
-- Debugging flight controller issues
+- Physics model debugging
+- Fast algorithm exploration (not for final deployment)
 
 **Go to:** Step 3B below
 
 ---
 
-## Step 3A: PyBullet-Only Mode (Recommended for Beginners)
+## Step 3A: ArduPilot SITL + Mode 99 (Primary)
 
-### ⏱️ Time Required: 1 minute
-
-**This is the FASTEST way to get started!** PyBullet runs entirely in software, no external simulators needed.
+### ⏱️ Time Required: 2 minutes setup, then training runs automatically
 
 ```bash
-# Enter the container
-docker exec -it drone_sim bash
-
-# Navigate to workspace
-cd /workspace
-
-# Test the environment (verify everything works)
-python3 examples/test_environment.py
+cd ~/autonomous_drone_sim
+bash start_mode99_training.sh --mission obstacle_avoidance --timesteps 1000000
 ```
+
+The script:
+1. Starts ArduPilot SITL (speedup=5, loads `configs/ardupilot/params.parm`)
+2. Waits for TCP port 5760 to open (`nc -z` poll, 120 s timeout)
+3. Launches `rl_training/train_mode99_rl.py` (PPO)
+4. Saves checkpoints to `rl_training/models/` every 10k steps
+5. Ctrl-C cleanly stops both training and SITL
 
 **Expected output:**
 ```
@@ -576,14 +573,12 @@ rm -rf data/logs/* data/checkpoints/* data/recordings/*
 
 | Task | Command |
 |------|---------|
-| **Start container** | `docker compose up -d` |
-| **Enter container** | `docker exec -it drone_sim bash` |
-| **Test PyBullet env** | `python3 examples/test_environment.py` |
-| **Test with GUI** | `python3 examples/test_environment_gui.py` |
-| **Train RL agent** | `python3 examples/train_pybullet_rl.py --algorithm PPO` |
-| **Evaluate model** | `python3 examples/test_pybullet_rl.py <model_path> --algorithm PPO` |
-| **Monitor training** | `tensorboard --logdir=data/logs --host=0.0.0.0` |
-| **Stop container** | `docker compose down` |
+| **Start training (Mode 99)** | `bash start_mode99_training.sh --mission obstacle_avoidance` |
+| **SITL only (manual)** | `bash start_mode99_training.sh --sitl-only` |
+| **Train manually** | `cd rl_training && python3 train_mode99_rl.py` |
+| **Test trained model** | `python3 rl_training/train_mode99_rl.py --mode test --model-path <path>` |
+| **Monitor training** | `tensorboard --logdir=rl_training/logs` |
+| **Rebuild ArduCopter** | `cd ~/ardupilot && ./waf copter` |
 
 ### PyBullet-Specific Commands
 

@@ -300,7 +300,7 @@ class MAVLinkInterface:
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,  # Confirmation
             1,  # Arm
-            21196 if force else 0,  # Force (magic number to bypass pre-arm checks)
+            2989 if force else 0,  # Force arm (matches companion_mode99.py magic number)
             0, 0, 0, 0, 0,
         )
 

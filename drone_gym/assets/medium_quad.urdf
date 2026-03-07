@@ -8,11 +8,12 @@
     Based on typical racing/photography drone specifications
   -->
 
+  <!-- All physical parameters synchronized with sysid_params.txt -->
   <properties
     arm="0.225"
     kf="1.0e-5"
-    km="1.5e-7"
-    thrust2weight="2.0"
+    km="1.6e-7"
+    thrust2weight="1.6315"
     max_speed_kmh="80"
     gnd_eff_coeff="11.36859"
     prop_radius="0.127"
@@ -28,15 +29,15 @@
     <inertial>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="2.0"/>
-      <!-- Inertia values from ArduPilot sysid_params.txt -->
-      <inertia ixx="0.015" ixy="0.0" ixz="0.0" iyy="0.015" iyz="0.0" izz="0.025"/>
+      <!-- Inertia from sysid_params.txt: IXX=0.0347 IYY=0.0458 IZZ=0.0977 -->
+      <inertia ixx="0.0347" ixy="0.0" ixz="0.0" iyy="0.0458" iyz="0.0" izz="0.0977"/>
     </inertial>
 
     <!--
       References:
       - ArduPilot SITL typical values
       - Medium quadcopter racing/photography drone specs
-      - Motor: ~920 KV, max 20N thrust per motor
+      - Motor: 920 KV (MOTOR_KV), max 8.0 N thrust per motor (MAX_THRUST)
     -->
 
     <visual>
@@ -64,8 +65,8 @@
   <link name="prop0_link">
     <inertial>
       <origin rpy="0 0 0" xyz="0.159 -0.159 0"/>
-      <mass value="0.05"/>
-      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+      <mass value="0.0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
     </inertial>
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -87,8 +88,8 @@
   <link name="prop1_link">
     <inertial>
       <origin rpy="0 0 0" xyz="-0.159 -0.159 0"/>
-      <mass value="0.05"/>
-      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+      <mass value="0.0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
     </inertial>
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -110,8 +111,8 @@
   <link name="prop2_link">
     <inertial>
       <origin rpy="0 0 0" xyz="-0.159 0.159 0"/>
-      <mass value="0.05"/>
-      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+      <mass value="0.0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
     </inertial>
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -133,8 +134,8 @@
   <link name="prop3_link">
     <inertial>
       <origin rpy="0 0 0" xyz="0.159 0.159 0"/>
-      <mass value="0.05"/>
-      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="2e-5"/>
+      <mass value="0.0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
     </inertial>
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>

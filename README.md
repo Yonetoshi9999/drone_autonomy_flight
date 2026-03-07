@@ -4,14 +4,12 @@ A comprehensive simulation environment for autonomous drone development using Ar
 
 ## Features
 
-- **ArduPilot SITL Integration**: Full Software-In-The-Loop simulation
-- **AirSim Physics**: Realistic 3D physics and sensor simulation
-- **ROS2 Humble Support**: Robot Operating System integration
-- **OpenAI Gym Environment**: Standard RL interface
-- **Medium Quadcopter Model**: 2.0kg quadcopter (matches ArduPilot master branch)
-- **Multiple Algorithms**: A*, RRT*, APF path planning
-- **RL Training**: Stable-Baselines3 integration with PPO/SAC/TD3
-- **Comprehensive Logging**: CSV, ROS2 bags, TensorBoard
+- **ArduPilot SITL + Mode 99 LQR**: RL training uses Mode 99 LQI (100 Hz) as the inner control loop — policy trained matches real hardware exactly
+- **Obstacle Avoidance Training**: Virtual 6-direction LiDAR in gym env; same format as RPi physical LiDAR at flight time
+- **OpenAI Gym Environment**: Standard RL interface (`ArduPilotMode99Env`)
+- **Medium Quadcopter Model**: 2.0 kg, all parameters from `sysid_params.txt` (single source of truth)
+- **PPO Training**: Stable-Baselines3 PPO with checkpoint saving every 10k steps
+- **Comprehensive Logging**: TensorBoard integration
 
 ## System Requirements
 
@@ -99,16 +97,21 @@ for _ in range(1000):
         break
 ```
 
-### Train RL Agent
+### Train RL Agent (Mode 99 + SITL)
 
 ```bash
-python scripts/training/train_ppo.py --config configs/training/ppo_default.yaml
+cd ~/autonomous_drone_sim
+bash start_mode99_training.sh --mission obstacle_avoidance --timesteps 1000000
 ```
 
-### Evaluate Trained Model
+This starts ArduPilot SITL at 5× speedup and trains a PPO agent that sends
+position targets to Mode 99 LQR. See `RL_TRAINING_GUIDE.md` for details.
+
+### Test Trained Model
 
 ```bash
-python scripts/evaluation/evaluate_model.py --model data/checkpoints/best_model.zip --episodes 100
+cd ~/autonomous_drone_sim/rl_training
+python3 train_mode99_rl.py --mode test --model-path models/ppo_obstacle_avoidance_final.zip
 ```
 
 ## Configuration

@@ -7,8 +7,8 @@ Train PPO agent for autonomous obstacle avoidance and waypoint navigation
 
 import argparse
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 import torch
 import os
@@ -29,7 +29,7 @@ def make_env(rank: int, seed: int = 0, mission_type: str = 'obstacle_avoidance')
     """
     def _init():
         env = ArduPilotMode99Env(
-            sitl_connection=f'tcp:127.0.0.1:{5762 + rank}',
+            sitl_connection=f'tcp:127.0.0.1:{5760 + rank}',
             mission_type=mission_type,
             max_steps=1000,
             goal_radius=1.0,
@@ -51,16 +51,29 @@ def train_ppo(
     log_dir: str = './logs'
 ):
     """
-    Train PPO agent
+    Train PPO agent against ArduPilot SITL + Mode 99 LQR.
+
+    Requires exactly n_envs=1: each ArduPilotMode99Env holds one MAVLink TCP
+    connection to SITL, and SubprocVecEnv would need a separate SITL process
+    per worker. Start additional SITL instances manually if parallelism is needed.
+
+    SITL must be started with --speedup 5 to match time_scale=5.0 in the env.
 
     Args:
         mission_type: 'obstacle_avoidance' or 'waypoint_navigation'
         total_timesteps: Total training steps
-        n_envs: Number of parallel environments
+        n_envs: Number of parallel environments (must be 1 for SITL training)
         learning_rate: Learning rate
         save_dir: Directory to save models
         log_dir: Directory for TensorBoard logs
     """
+    if n_envs != 1:
+        raise ValueError(
+            "SITL-based Mode 99 training requires n_envs=1. "
+            "Each environment needs its own SITL instance. "
+            "Start multiple SITL instances manually and adjust sitl_connection ports if needed."
+        )
+
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
 
@@ -69,37 +82,20 @@ def train_ppo(
     print("=" * 60)
     print(f"Mission Type: {mission_type}")
     print(f"Total Timesteps: {total_timesteps:,}")
-    print(f"Parallel Environments: {n_envs}")
     print(f"Learning Rate: {learning_rate}")
+    print(f"SITL connection: tcp:127.0.0.1:5760 (speedup=5 required)")
     print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
     print("=" * 60)
 
-    # Create vectorized environment
-    if n_envs == 1:
-        env = DummyVecEnv([make_env(0, mission_type=mission_type)])
-    else:
-        env = SubprocVecEnv([
-            make_env(i, mission_type=mission_type)
-            for i in range(n_envs)
-        ])
+    # Single training environment (n_envs=1 enforced above)
+    env = DummyVecEnv([make_env(0, mission_type=mission_type)])
 
-    # Create evaluation environment
-    eval_env = DummyVecEnv([make_env(100, mission_type=mission_type)])
-
-    # Callbacks
+    # Checkpoint only — no separate eval env to avoid MAVLink conflicts.
+    # Run `python3 train_mode99_rl.py --mode test --model-path <path>` for evaluation.
     checkpoint_callback = CheckpointCallback(
         save_freq=10000,
         save_path=save_dir,
         name_prefix=f'ppo_{mission_type}'
-    )
-
-    eval_callback = EvalCallback(
-        eval_env,
-        best_model_save_path=save_dir,
-        log_path=log_dir,
-        eval_freq=5000,
-        deterministic=True,
-        render=False
     )
 
     # Create PPO model
@@ -126,7 +122,7 @@ def train_ppo(
     try:
         model.learn(
             total_timesteps=total_timesteps,
-            callback=[checkpoint_callback, eval_callback],
+            callback=[checkpoint_callback],
             progress_bar=True
         )
 
@@ -142,7 +138,6 @@ def train_ppo(
 
     finally:
         env.close()
-        eval_env.close()
 
 
 def test_trained_model(
@@ -171,7 +166,7 @@ def test_trained_model(
 
     # Create environment
     env = ArduPilotMode99Env(
-        sitl_connection='tcp:127.0.0.1:5762',
+        sitl_connection='tcp:127.0.0.1:5760',
         mission_type=mission_type,
         max_steps=1000,
         goal_radius=1.0,
@@ -229,8 +224,6 @@ if __name__ == '__main__':
                         help='Mission type')
     parser.add_argument('--timesteps', type=int, default=1_000_000,
                         help='Total training timesteps')
-    parser.add_argument('--n-envs', type=int, default=1,
-                        help='Number of parallel environments')
     parser.add_argument('--lr', type=float, default=3e-4,
                         help='Learning rate')
     parser.add_argument('--model-path', type=str, default=None,
@@ -244,7 +237,6 @@ if __name__ == '__main__':
         train_ppo(
             mission_type=args.mission,
             total_timesteps=args.timesteps,
-            n_envs=args.n_envs,
             learning_rate=args.lr
         )
     else:  # test

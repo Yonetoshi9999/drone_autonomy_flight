@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start ArduPilot SITL for EDU650 Quadcopter
+# Start ArduPilot SITL for Medium Quadcopter (Mode 99 LQR)
 
 set -e
 
@@ -42,7 +42,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Navigate to ArduPilot directory
-cd /opt/ardupilot
+# Use ARDUPILOT_DIR env var if set, otherwise default to $HOME/ardupilot (Docker: /opt/ardupilot)
+ARDUPILOT_DIR="${ARDUPILOT_DIR:-$HOME/ardupilot}"
+cd "$ARDUPILOT_DIR"
 
 echo "Vehicle: $VEHICLE"
 echo "Frame: $FRAME"
@@ -61,9 +63,12 @@ if [ "$MAP" = true ]; then
 fi
 
 # Load custom parameters
-if [ -f "/workspace/configs/ardupilot/params.parm" ]; then
-    echo "Loading custom parameters..."
-    SITL_OPTS="$SITL_OPTS --load /workspace/configs/ardupilot/params.parm"
+# WORKSPACE_DIR can be overridden; default relative to this script's location
+WORKSPACE_DIR="${WORKSPACE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+PARAM_FILE="$WORKSPACE_DIR/configs/ardupilot/params.parm"
+if [ -f "$PARAM_FILE" ]; then
+    echo "Loading custom parameters from $PARAM_FILE..."
+    SITL_OPTS="$SITL_OPTS --add-param-file $PARAM_FILE"
 fi
 
 echo "Starting SITL..."

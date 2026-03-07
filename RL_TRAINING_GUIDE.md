@@ -1,496 +1,245 @@
-# RL Training with PyBullet - Complete Guide
+# RL Training Guide — Mode 99 + ArduPilot SITL
 
-**Date**: February 15, 2026
-**Environment**: Existing Docker setup (autonomous_drone_sim:latest)
-
----
-
-## 🎯 **Training Strategy (3 Phases)**
-
-### **Phase 1: Pure PyBullet RL Training** ⭐ START HERE
-- Train PPO agent in PyBullet-only
-- No ArduPilot SITL needed
-- Fast iteration (100+ FPS)
-- Expected: 1-2 days for convergence
-
-### **Phase 2: Validation with ArduPilot SITL**
-- Connect PyBullet to ArduPilot SITL via MAVLink
-- Test trained policy with Mode 99
-- Compare RL vs LQR baseline
-
-### **Phase 3: Hardware Deployment**
-- Deploy to real drone
-- Mode 99 as safety backup
+**Date**: 2026-03-08
+**Primary training path**: ArduPilot SITL + Mode 99 LQR (100 Hz inner loop)
 
 ---
 
-## 🏗️ **Quick Start (5 Minutes)**
+## Architecture
 
-### Step 1: Start Docker Environment
+```
+RL Agent (PPO, 20 Hz)
+    │  SET_POSITION_TARGET_LOCAL_NED
+    │  [pos_N, pos_E, pos_D, yaw_rate]
+    ▼
+ArduPilot SITL — Mode 99 LQI (100 Hz)
+    │  18-state LQI feedback: K × (x − x_ref)
+    │  u = [F_thrust, M_roll, M_pitch, M_yaw]
+    ▼
+Motor mixing → direct PWM output
+
+RL agent observes (26D):
+  position(3) + velocity(3) + attitude(3) + rates(3)
+  + battery(1) + GPS(4) + obstacles(6) + goal_relative(3)
+
+Obstacle distances are computed geometrically from virtual
+box obstacles placed in the NED space each episode — identical
+format to what the RPi's physical LiDAR produces at real flight time.
+```
+
+Mode 99 LQR provides **precise inner-loop control**. The RL agent
+learns **high-level navigation and obstacle avoidance** by selecting
+position targets. The trained policy is deployed on the Raspberry Pi
+at real flight time, with the physical LiDAR replacing virtual obstacles.
+
+---
+
+## Prerequisites
+
+```bash
+# Python dependencies (one-time)
+pip install stable-baselines3 pymavlink gymnasium tqdm rich
+```
+
+## Quick Start
 
 ```bash
 cd ~/autonomous_drone_sim
-
-# Start the main drone_sim container
-docker compose up -d drone_sim
-
-# Verify containers running
-docker ps
-# Should see: drone_sim, tensorboard, jupyter, grafana
+bash start_mode99_training.sh --mission obstacle_avoidance --timesteps 1000000
 ```
 
-### Step 2: Enter Container and Start Training
+That's it. The script handles:
+1. Start ArduPilot SITL at **5× speedup** (matches `time_scale=5.0` in gym env)
+2. Load parameters from `configs/ardupilot/params.parm`
+3. Wait for TCP port 5760 to open (`nc -z` poll, 120 s timeout)
+4. Launch `rl_training/train_mode99_rl.py`
+5. Kill SITL on Ctrl-C or exit
+
+---
+
+## Training Script Options
 
 ```bash
-# Enter the container
-docker exec -it drone_sim bash
-
-# Inside container: Start training
-cd /workspace
-python3 scripts/training/train_ppo.py \
-    --env DroneNav-v0 \
-    --timesteps 1000000 \
-    --n-envs 4
+bash start_mode99_training.sh \
+    --mission obstacle_avoidance   # or waypoint_navigation
+    --timesteps 1000000            # total PPO steps
+    --lr 3e-4                      # learning rate
+    --no-rebuild                   # skip ArduPilot rebuild (faster restart)
+    --sitl-only                    # start SITL only (manual training)
 ```
 
-### Step 3: Monitor Training
+### SITL-only + manual training
+
+Useful for debugging or resuming:
 
 ```bash
-# TensorBoard: http://localhost:6006
-# Jupyter: http://localhost:8888
-# Grafana: http://localhost:3000
+# Terminal 1: SITL
+bash start_mode99_training.sh --sitl-only &
+
+# Terminal 2: Training
+cd ~/autonomous_drone_sim/rl_training
+python3 train_mode99_rl.py --mission obstacle_avoidance --timesteps 1000000
 ```
 
 ---
 
-## 📦 **What's Already Installed**
+## Environment Details (`rl_training/ardupilot_gym_env.py`)
 
-Your Docker image includes:
-- ✅ Python 3.10
-- ✅ PyTorch
-- ✅ ArduPilot SITL
-- ✅ ROS2 Humble
-- ✅ Basic ML packages
+### Observation space (26D, float32)
 
-**Need to verify/add**:
-- Stable-Baselines3
-- PyBullet
-- Gymnasium
+| Slice | Meaning | Units |
+|-------|---------|-------|
+| `obs[0:3]` | Position N, E, D | m (NED) |
+| `obs[3:6]` | Velocity N, E, D | m/s |
+| `obs[6:9]` | Roll, Pitch, Yaw | rad |
+| `obs[9:12]` | Body rates p, q, r | rad/s |
+| `obs[12]` | Battery voltage | V |
+| `obs[13:17]` | GPS: lat, lon, alt, sats | deg/deg/m/count |
+| `obs[17:23]` | Obstacle distances: front, back, right, left, up, down | m (capped at 10m) |
+| `obs[23:26]` | Goal relative position N, E, D | m |
 
----
+### Action space (4D, float32)
 
-## 🔧 **Setup Verification & Installation**
+| Index | Meaning | Range |
+|-------|---------|-------|
+| `act[0]` | Target position N | −100 … +100 m |
+| `act[1]` | Target position E | −100 … +100 m |
+| `act[2]` | Target position D | −150 … 0 m |
+| `act[3]` | Yaw rate | −3 … +3 rad/s |
 
-### Check What's Installed
+Actions are sent as `SET_POSITION_TARGET_LOCAL_NED` with
+type_mask `0x05C0` (pos + vel + yaw_rate; vel=zeros).
 
-```bash
-# Start container
-docker exec -it drone_sim bash
+### Obstacle simulation
 
-# Check packages
-python3 << 'EOF'
-try:
-    import pybullet
-    print("✅ PyBullet:", pybullet.__version__)
-except:
-    print("❌ PyBullet not installed")
+Each episode, 3–8 vertical box columns (1×1×20 m, NED) are placed randomly
+between start and goal. 6-direction ray distances are computed via ray-AABB
+intersection. At real flight time, the RPi's LiDAR replaces these virtual
+distances — the policy is agnostic to the source.
 
-try:
-    import stable_baselines3
-    print("✅ Stable-Baselines3:", stable_baselines3.__version__)
-except:
-    print("❌ Stable-Baselines3 not installed")
+### Reward function
 
-try:
-    import gymnasium
-    print("✅ Gymnasium:", gymnasium.__version__)
-except:
-    print("❌ Gymnasium not installed")
+| Component | Formula |
+|-----------|---------|
+| Distance penalty | −0.1 × ‖goal_relative‖ |
+| Goal bonus | +100 when distance < goal_radius (1 m) |
+| Obstacle penalty | −10 × exp(−dist) for each direction < 5 m |
+| Crash penalty | −1000 when any direction < 1 m |
+| Energy penalty | −0.01 × ‖velocity‖ |
+| Smoothness penalty | −0.05 × ‖Δaction‖ |
 
-try:
-    import drone_gym
-    print("✅ drone_gym installed")
-except:
-    print("❌ drone_gym not installed")
-EOF
+### Startup sequence (mirrors `companion_mode99.py`)
+
 ```
-
-### Install Missing Packages (if needed)
-
-```bash
-# Inside container
-pip3 install \
-    pybullet==3.2.6 \
-    stable-baselines3[extra]==2.2.1 \
-    gymnasium[all]==0.29.1 \
-    tensorboard==2.15.1
-
-# Reinstall drone_gym in development mode
-pip3 install -e /workspace/
+1. ARMING_CHECK = 0
+2. GUIDED mode (while disarmed)
+3. Wait GPS fix (≥6 sats) + EKF (vel+pos, not const_pos)
+4. Force arm (MAV_CMD_COMPONENT_ARM_DISARM, magic 2989)
+5. Takeoff to 5 m, wait alt ≥ 4.5 m
+6. Switch to Mode 99 (custom_mode = 99)
+7. Capture M99_REF_N/E/D from NAMED_VALUE_FLOAT
+8. Begin 20 Hz SET_POSITION_TARGET commands
 ```
 
 ---
 
-## 🎮 **Training Modes**
+## Checkpoints and Logs
 
-### Mode 1: Pure PyBullet (Fastest) ⭐ RECOMMENDED
-
-**Pros**:
-- 100+ FPS simulation speed
-- No SITL complexity
-- Stable training
-- Fast iteration
-
-**Cons**:
-- Doesn't test Mode 99
-- Pure simulation
-
-**Use this for**: Initial training, algorithm development
-
-```bash
-# Inside container
-python3 scripts/training/train_ppo.py \
-    --env DroneNav-v0 \
-    --timesteps 1000000 \
-    --n-envs 8 \
-    --device cuda  # or cpu
+```
+rl_training/
+├── models/
+│   ├── ppo_obstacle_avoidance_<step>.zip   # Every 10 000 steps
+│   └── ppo_obstacle_avoidance_final.zip    # End of training
+└── logs/
+    └── ppo_obstacle_avoidance/             # TensorBoard logs
 ```
 
-### Mode 2: PyBullet + ArduPilot Integration
-
-**Pros**:
-- Tests real flight controller
-- Validates Mode 99
-- More realistic
-
-**Cons**:
-- Slower (20-30 FPS)
-- More complex setup
-- Requires SITL working
-
-**Use this for**: Validation, final testing
+Monitor with TensorBoard:
 
 ```bash
-# Terminal 1: Start SITL (inside container)
-cd /opt/ardupilot/ArduCopter
-../Tools/autotest/sim_vehicle.py --no-mavproxy
+tensorboard --logdir ~/autonomous_drone_sim/rl_training/logs
+# Open: http://localhost:6006
+```
 
-# Terminal 2: Train with MAVLink
-python3 scripts/training/train_ppo.py \
-    --env DroneNav-v0 \
-    --use-mavlink \
-    --timesteps 500000
+Key metrics to watch:
+- `rollout/ep_rew_mean` — should increase over time
+- `rollout/ep_len_mean` — should stabilize as agent learns efficient paths
+- `train/policy_loss` — should decrease
+
+---
+
+## Testing a Trained Model
+
+```bash
+# Start SITL first
+bash start_mode99_training.sh --sitl-only &
+
+# Test for 10 episodes
+cd ~/autonomous_drone_sim/rl_training
+python3 train_mode99_rl.py \
+    --mode test \
+    --mission obstacle_avoidance \
+    --model-path models/ppo_obstacle_avoidance_final.zip \
+    --n-episodes 10
 ```
 
 ---
 
-## 📊 **Training Configuration**
+## Physical Model Parameters
 
-### Recommended Hyperparameters
+All parameters are sourced from `~/ardupilot/ArduCopter/sysid_params.txt`.
+The following files are synchronized to this source of truth:
 
-```yaml
-# For pure PyBullet training
-environment:
-  name: DroneNav-v0
-  n_envs: 8              # Parallel environments
-  max_steps: 1000        # Steps per episode
-
-algorithm:
-  name: PPO
-  learning_rate: 3e-4
-  n_steps: 2048          # Steps before update
-  batch_size: 64
-  n_epochs: 10
-  gamma: 0.99            # Discount factor
-  gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.01         # Entropy coefficient
-
-training:
-  total_timesteps: 1000000  # ~125k episodes with 8 envs
-  eval_freq: 10000
-  save_freq: 50000
-  device: cuda           # or cpu
-```
-
-### Expected Results
-
-| Timesteps | Episodes | Success Rate | Training Time |
-|-----------|----------|--------------|---------------|
-| 100k      | 12.5k    | ~30%         | 2-3 hours     |
-| 500k      | 62.5k    | ~70%         | 10-12 hours   |
-| 1000k     | 125k     | ~90%         | 20-24 hours   |
+| File | Parameters |
+|------|-----------|
+| `~/ardupilot/ArduCopter/sysid_params.txt` | **Ground truth** |
+| `drone_gym/assets/medium_quad.urdf` | mass=2.0, IXX=0.0347, IYY=0.0458, IZZ=0.0977, km=1.6e-7, TWR=1.6315 |
+| `drone_gym/physics/pybullet_drone.py` | thrust_to_weight=1.6315, km=1.6e-7, max_thrust=8.0 N, max_rpm=894 rad/s |
+| `configs/ardupilot/params.parm` | MOT_THST_HOVER=0.50, rate gains from sysid |
+| `~/ardupilot/ArduCopter/mode_smartphoto99.cpp` | fallback defaults match sysid |
 
 ---
 
-## 📈 **Monitoring Training**
+## Troubleshooting
 
-### TensorBoard
-
-```bash
-# Already running at http://localhost:6006
-
-# View logs
-# - Reward per episode
-# - Episode length
-# - Loss curves
-# - Learning rate schedule
-```
-
-### Jupyter Notebook
+### SITL doesn't start
 
 ```bash
-# Already running at http://localhost:8888
+# Check if arducopter binary exists
+ls ~/ardupilot/build/sitl/bin/arducopter
 
-# Analyze training:
-# - Load checkpoints
-# - Visualize policies
-# - Test trained agent
+# Rebuild if missing
+cd ~/ardupilot && ./waf copter
 ```
 
-### Command Line Monitoring
+### "Mode 99 not entered" / companion timeout
 
-```bash
-# Inside container, watch training progress
-python3 scripts/training/monitor_training.py
+Mode 99 gives 12 s for the companion to send the first command.
+If the reset sequence takes too long, check EKF convergence step — SITL
+at speedup=5 may converge faster than real-time. If slow, increase
+timeout by raising `ekf_deadline` in `ardupilot_gym_env.py:reset()`.
 
-# Or use the shell script
-bash scripts/training/watch_training.sh
-```
+### Training not learning
+
+- Check TensorBoard: reward should increase after ~50k steps
+- Verify SITL speedup matches `time_scale`: both should be 5
+- Try lower learning rate: `--lr 1e-4`
+
+### Policy works in SITL but not on hardware
+
+- Obstacle distances in SITL are virtual (geometric). At hardware time, real LiDAR
+  distances are used. Verify RPi's LiDAR publishes 6-direction distances in the same
+  NED order: [front, back, right, left, up, down].
 
 ---
 
-## 💾 **Checkpoints & Results**
-
-### Checkpoint Locations
-
-```
-/workspace/data/
-├── checkpoints/          # Model checkpoints
-│   ├── ppo_DroneNav-v0_<timestamp>/
-│   │   ├── best_model/   # Best performing model
-│   │   ├── ppo_model_50000_steps.zip
-│   │   └── final_model.zip
-├── logs/                 # TensorBoard logs
-│   └── <timestamp>/
-└── videos/               # Episode recordings
-```
-
-### Load and Test Trained Model
-
-```python
-from stable_baselines3 import PPO
-import gymnasium as gym
-
-# Load trained model
-model = PPO.load("data/checkpoints/.../best_model/best_model.zip")
-
-# Test in environment
-env = gym.make("DroneNav-v0", render_mode="human")
-obs, info = env.reset()
-
-for _ in range(1000):
-    action, _states = model.predict(obs, deterministic=True)
-    obs, reward, terminated, truncated, info = env.step(action)
-    if terminated or truncated:
-        obs, info = env.reset()
-
-env.close()
-```
-
----
-
-## 🔄 **Resume Training**
-
-```bash
-# Inside container
-python3 scripts/training/continue_training.py \
-    --checkpoint data/checkpoints/ppo_DroneNav-v0_<timestamp>/ppo_model_500000_steps.zip \
-    --additional-timesteps 500000
-```
-
----
-
-## 🐛 **Troubleshooting**
-
-### Issue: Container won't start
-
-```bash
-# Check if containers are running
-docker ps -a
-
-# Check logs
-docker logs drone_sim
-
-# Restart
-docker compose restart drone_sim
-```
-
-### Issue: Out of memory
-
-```bash
-# Reduce parallel environments
---n-envs 2  # Instead of 8
-
-# Or increase Docker memory limit
-# Edit docker-compose.yml:
-#   memory: 16G  # Increase from 8G
-```
-
-### Issue: Training not converging
-
-```bash
-# Try different hyperparameters
---learning-rate 1e-4    # Lower LR
---n-steps 4096          # More steps before update
---ent-coef 0.001        # Lower entropy
-```
-
-### Issue: GPU not detected
-
-```bash
-# Inside container
-python3 -c "import torch; print(torch.cuda.is_available())"
-
-# If False, check NVIDIA Docker runtime
-docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
-```
-
----
-
-## 📋 **Complete Training Workflow**
-
-### 1. Start Environment
-
-```bash
-cd ~/autonomous_drone_sim
-docker compose up -d
-docker exec -it drone_sim bash
-```
-
-### 2. Verify Installation
-
-```bash
-# Inside container
-python3 -c "import pybullet, stable_baselines3, drone_gym; print('All packages OK')"
-```
-
-### 3. Run Quick Test
-
-```bash
-# Test environment
-python3 examples/test_gym_env.py
-
-# Expected: Environment runs, drone spawns, no errors
-```
-
-### 4. Start Training
-
-```bash
-# Training command
-python3 scripts/training/train_ppo.py \
-    --env DroneNav-v0 \
-    --timesteps 1000000 \
-    --n-envs 4 \
-    --device cuda
-
-# Training will save to:
-# /workspace/data/checkpoints/ppo_DroneNav-v0_<timestamp>/
-```
-
-### 5. Monitor Progress
-
-```bash
-# Open browser:
-# - TensorBoard: http://localhost:6006
-# - Jupyter: http://localhost:8888
-
-# Command line monitoring
-python3 scripts/training/monitor_training.py
-```
-
-### 6. Test Trained Model
-
-```bash
-# Load best model and evaluate
-python3 scripts/training/evaluate_policy.py \
-    --checkpoint data/checkpoints/.../best_model/best_model.zip \
-    --episodes 100
-```
-
-### 7. (Optional) Validate with ArduPilot
-
-```bash
-# Start SITL
-cd /opt/ardupilot/ArduCopter
-../Tools/autotest/sim_vehicle.py --no-mavproxy &
-
-# Test with Mode 99
-python3 scripts/training/test_with_ardupilot.py \
-    --checkpoint data/checkpoints/.../best_model/best_model.zip
-```
-
----
-
-## 🎯 **Success Criteria**
-
-### Training Complete When:
-- ✅ Mean episode reward > 80
-- ✅ Success rate > 90%
-- ✅ Episode length stabilized
-- ✅ Loss converged
-
-### Validation Complete When:
-- ✅ Trained policy works in PyBullet
-- ✅ Policy works with ArduPilot SITL
-- ✅ Performance better than LQR baseline
-
----
-
-## 🚀 **Next Steps After Training**
-
-1. **Evaluate Performance**
-   - Compare against LQR baseline
-   - Test in different scenarios
-   - Measure robustness
-
-2. **Optimize Policy**
-   - Prune network
-   - Quantize weights
-   - Export to ONNX
-
-3. **Deploy to Hardware**
-   - Test in safe environment
-   - Use Mode 99 as backup
-   - Gradual rollout
-
----
-
-## 📚 **Reference Files**
+## Key Files
 
 | File | Purpose |
 |------|---------|
-| `scripts/training/train_ppo.py` | Main training script |
-| `scripts/training/monitor_training.py` | Monitor progress |
-| `scripts/training/continue_training.py` | Resume training |
-| `drone_gym/envs/pybullet_drone_env.py` | PyBullet environment |
-| `docker-compose.yml` | Docker configuration |
-
----
-
-## ⏱️ **Time Estimates**
-
-| Task | Time |
-|------|------|
-| Setup verification | 5 min |
-| Install missing packages | 5 min |
-| Test environment | 2 min |
-| Training (1M timesteps, 8 envs, GPU) | 20-24 hours |
-| Validation | 1 hour |
-| **Total** | **~1-2 days** |
-
----
-
-**Created**: February 15, 2026
-**Status**: Ready to use
-**Environment**: Docker (autonomous_drone_sim:latest)
+| `start_mode99_training.sh` | Master launch script (SITL + training) |
+| `rl_training/train_mode99_rl.py` | PPO training loop |
+| `rl_training/ardupilot_gym_env.py` | Gym environment (MAVLink + obstacle sim) |
+| `scripts/start_sitl.sh` | SITL startup (used by master script) |
+| `configs/ardupilot/params.parm` | ArduPilot parameter file |
+| `~/ardupilot/ArduCopter/sysid_params.txt` | Physical parameters (single source of truth) |

@@ -1,6 +1,6 @@
-# ArduPilot Parameters for EDU650 Quadcopter
-# Custom configuration for 3.4kg quadcopter in X configuration
-# Last updated: 2025-12-18
+# ArduPilot Parameters for Medium Quadcopter
+# 2.0 kg, X configuration — synchronized with sysid_params.txt
+# Last updated: 2026-03-08
 
 # ============================================
 # FRAME AND MOTOR CONFIGURATION
@@ -13,19 +13,18 @@ MOT_PWM_MAX,2000                 # Maximum PWM
 MOT_SPIN_ARM,0.10                # Motor spin when armed (%)
 MOT_SPIN_MIN,0.15                # Motor minimum throttle
 MOT_SPIN_MAX,0.95                # Motor maximum throttle
-MOT_THST_HOVER,0.35              # Hover throttle (35% for 3.4kg)
+MOT_THST_HOVER,0.50              # Hover throttle (50% = THROTTLE_HOVER from sysid_params.txt)
 MOT_THST_EXPO,0.65               # Thrust curve expo
 
 # ============================================
 # VEHICLE MASS AND INERTIA
 # ============================================
-# EDU650 specifications: 3.4kg total mass
-# Estimated moment of inertia based on typical quadcopter
+# sysid_params.txt: MASS=2.0 kg, IXX=0.0347, IYY=0.0458, IZZ=0.0977
 INS_GYRO_FILTER,20               # Gyro filter (Hz)
 INS_ACCEL_FILTER,20              # Accelerometer filter (Hz)
 
 # ============================================
-# PID TUNING FOR EDU650
+# PID TUNING (from sysid_params.txt ROLL/PITCH/YAW_GAIN)
 # ============================================
 # Roll axis
 ATC_RAT_RLL_P,0.135              # Roll rate P gain
@@ -67,7 +66,7 @@ PSC_POSXY_P,1.0                  # Horizontal position P
 PSC_POSZ_P,1.0                   # Vertical position P
 
 # ============================================
-# CUSTOM FLIGHT MODES (EDU650 Specific)
+# CUSTOM FLIGHT MODES
 # ============================================
 FLTMODE1,0                       # Stabilize
 FLTMODE2,2                       # AltHold

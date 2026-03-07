@@ -116,26 +116,26 @@ CONNECT → GPS_WAIT → GUIDED → ARM → TAKEOFF → MODE99 → HOVER → CLI
 
 ## sysid_params.txt Reference
 
-Location: `/tmp/sitl_cowork/sysid_params.txt`
+Location: `~/ardupilot/ArduCopter/sysid_params.txt`
+
+This file is the **single source of truth** for all physical parameters. All models
+(PyBullet URDF, ArduPilot Mode 99, RL gym environment) are synchronized to these values.
 
 ```ini
-mass=1.3           # Vehicle mass [kg]
-MAX_THRUST=8.0     # Max thrust per motor [N]
-THROTTLE_HOVER=0.39 # Hover throttle fraction [0-1]
-IXX=0.01           # Roll moment of inertia [kg·m²]
-IYY=0.01           # Pitch moment of inertia [kg·m²]
-IZZ=0.02           # Yaw moment of inertia [kg·m²]
-ARM_LENGTH=0.225   # Motor-to-center arm length [m]
-MOMENT_COEFF=0.016 # Motor drag torque coefficient [m]
+MASS=2.0            # Vehicle mass [kg]
+IXX=0.0347          # Roll moment of inertia [kg·m²]
+IYY=0.0458          # Pitch moment of inertia [kg·m²]
+IZZ=0.0977          # Yaw moment of inertia [kg·m²]
+MOTOR_KV=920.0      # Motor KV rating
+MAX_THRUST=8.0      # Max thrust per motor [N]
+ARM_LENGTH=0.225    # Motor-to-center arm length [m]
+MOMENT_COEFF=0.016  # Drag torque / thrust ratio  (km = 0.016 × kf = 1.6e-7)
+THROTTLE_HOVER=0.5  # Hover throttle fraction [0-1]
 ```
 
-**Estimating Ixx/Iyy for a real drone:**
-```
-Ixx ≈ 4 × motor_mass × arm_length²
-    = 4 × 0.050 kg × 0.225² m² ≈ 0.010 kg·m²
-```
-
-After changing any parameter, run `./run_mode99.sh --gains-only` to regenerate K.
+After changing any parameter:
+1. Run `./run_mode99.sh --gains-only` to regenerate K gains
+2. Rebuild ArduCopter: `cd ~/ardupilot && ./waf copter`
 
 ---
 

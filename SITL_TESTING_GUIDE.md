@@ -400,7 +400,7 @@ grep -r "MODE_SMARTPHOTO_ENABLED" ArduCopter/
 **Solution:**
 1. Verify SITL is running
 2. Check connection string: `udp:127.0.0.1:14550`
-3. Try alternative: `tcp:127.0.0.1:5762`
+3. Try alternative: `tcp:127.0.0.1:5760` (arducopter binary native port)
 
 ### Failsafe Not Triggering
 

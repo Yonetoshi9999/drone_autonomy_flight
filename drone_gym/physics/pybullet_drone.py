@@ -67,17 +67,18 @@ class PyBulletDrone:
     def _set_model_parameters(self):
         """Set physics parameters based on drone model."""
         if self.drone_model == "medium_quad":
-            # Medium quadcopter - 2.0 kg (matches ArduPilot master branch)
-            # Based on typical racing/photography drone
-            self.mass = 2.0  # kg
-            self.arm_length = 0.225  # m (motor to center distance, 45cm diagonal)
-            self.thrust_to_weight = 2.0
-            self.kf = 1.0e-5  # thrust coefficient (N/RPM^2)
-            self.km = 1.5e-7  # torque coefficient (Nm/RPM^2)
-            self.max_rpm = 9000  # RPM at max thrust
+            # Medium quadcopter — parameters synchronized with sysid_params.txt
+            # MASS=2.0  ARM_LENGTH=0.225  MOTOR_KV=920  MAX_THRUST=8.0
+            # IXX=0.0347  IYY=0.0458  IZZ=0.0977  MOMENT_COEFF=0.016
+            self.mass = 2.0           # kg  (MASS)
+            self.arm_length = 0.225   # m   (ARM_LENGTH)
+            self.thrust_to_weight = 1.6315  # = MAX_THRUST*4 / (MASS*g) = 32/19.613
+            self.kf = 1.0e-5          # N/(rad/s)^2, thrust coefficient
+            self.km = 1.6e-7          # N·m/(rad/s)^2 = MOMENT_COEFF * kf = 0.016 * 1e-5
+            self.max_rpm = 894        # rad/s at MAX_THRUST = sqrt(8.0/1e-5)
             self.gnd_eff_coeff = 11.36859
-            self.motor_kv = 920.0  # Motor KV rating
-            self.max_thrust_per_motor = 20.0  # Newtons
+            self.motor_kv = 920.0     # RPM/V  (MOTOR_KV)
+            self.max_thrust_per_motor = 8.0   # N  (MAX_THRUST)
 
             # Motor positions for X configuration (larger frame)
             # Motor layout:   1(CCW)  0(CW)
