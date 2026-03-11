@@ -264,11 +264,11 @@ def main():
         print("  ERROR: arm timeout"); return 1
     print("  Armed!")
 
-    print("\n[5] Taking off to 5m (GUIDED) ...")
+    print("\n[5] Taking off to 45m (GUIDED) ...")
     master.mav.command_long_send(
         master.target_system, master.target_component,
         mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
-        0, 0, 0, 0, 0, 0, 0, 5.0)    # 5 m
+        0, 0, 0, 0, 0, 0, 0, 45.0)    # 45 m
 
     # Wait for NAV_TAKEOFF ACK
     to_ack_deadline = time.time() + 3.0
@@ -285,7 +285,7 @@ def main():
 
     last_alt_print = 0.0
     t_takeoff = time.time()
-    while time.time() - t_takeoff < 20:
+    while time.time() - t_takeoff < 60:
         loop_t = time.time()
         p = get_position(master)
         # Drain messages (non-blocking)
@@ -300,7 +300,7 @@ def main():
             last_alt_print = elapsed
             alt_str = f"{-p[2]:.2f}m" if p else "?"
             print(f"  [takeoff {elapsed:.0f}s] alt={alt_str}")
-        if p and -p[2] >= 4.5:
+        if p and -p[2] >= 43.0:
             print(f"  Altitude {-p[2]:.2f}m — takeoff complete")
             fallback_pos = p   # save last confirmed position as emergency fallback
             break
@@ -351,7 +351,7 @@ def main():
         fb = fallback_pos if 'fallback_pos' in dir() else None
         ref_n = fb[0] if fb else 0.0
         ref_e = fb[1] if fb else 0.0
-        ref_d = fb[2] if fb else -5.0
+        ref_d = fb[2] if fb else -45.0
 
     print(f"  Hold reference: N={ref_n:.2f} E={ref_e:.2f} D={ref_d:.2f} (alt={-ref_d:.2f}m)")
 

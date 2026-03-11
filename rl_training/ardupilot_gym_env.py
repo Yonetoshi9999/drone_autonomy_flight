@@ -270,14 +270,14 @@ class ArduPilotMode99Env(gym.Env):
         self.arm()
         time.sleep(0.1)
 
-        # Step 5: Takeoff to 5m in GUIDED
-        self.takeoff(5.0)
+        # Step 5: Takeoff to 45m in GUIDED
+        self.takeoff(45.0)
         t_takeoff = time.time()
         fallback_pos = None
-        while time.time() - t_takeoff < 20.0:
+        while time.time() - t_takeoff < 60.0:
             self.update_telemetry()
             alt = -self.telemetry['position'][2]
-            if alt >= 4.5:
+            if alt >= 43.0:
                 fallback_pos = self.telemetry['position'].copy()
                 print(f"  Takeoff complete at {alt:.2f}m")
                 break

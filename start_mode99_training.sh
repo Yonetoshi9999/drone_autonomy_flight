@@ -7,6 +7,7 @@
 # Usage:
 #   bash start_mode99_training.sh [--mission obstacle_avoidance|waypoint_navigation]
 #                                 [--timesteps 1000000] [--lr 3e-4]
+#                                 [--resume models/ppo_obstacle_avoidance_30000_steps.zip]
 #                                 [--sitl-only] [--no-rebuild]
 
 set -e
@@ -23,6 +24,7 @@ SITL_SPEEDUP=5
 MISSION="obstacle_avoidance"
 TIMESTEPS=1000000
 LR="3e-4"
+RESUME=""
 SITL_ONLY=false
 NO_REBUILD=""
 
@@ -31,6 +33,7 @@ while [[ $# -gt 0 ]]; do
         --mission)    MISSION="$2";     shift 2 ;;
         --timesteps)  TIMESTEPS="$2";   shift 2 ;;
         --lr)         LR="$2";          shift 2 ;;
+        --resume)     RESUME="$2";      shift 2 ;;
         --sitl-only)  SITL_ONLY=true;   shift ;;
         --no-rebuild) NO_REBUILD="--no-rebuild"; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -116,8 +119,15 @@ echo "  (Logs saved to       $TRAINING_DIR/logs/)"
 echo ""
 
 cd "$TRAINING_DIR"
+RESUME_ARG=""
+if [ -n "$RESUME" ]; then
+    RESUME_ARG="--resume $RESUME"
+    echo "  Resuming from: $RESUME"
+fi
+
 python3 train_mode99_rl.py \
     --mode train \
     --mission "$MISSION" \
     --timesteps "$TIMESTEPS" \
-    --lr "$LR"
+    --lr "$LR" \
+    $RESUME_ARG

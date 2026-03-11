@@ -48,7 +48,8 @@ def train_ppo(
     n_envs: int = 1,
     learning_rate: float = 3e-4,
     save_dir: str = './models',
-    log_dir: str = './logs'
+    log_dir: str = './logs',
+    resume_path: str = None
 ):
     """
     Train PPO agent against ArduPilot SITL + Mode 99 LQR.
@@ -84,6 +85,7 @@ def train_ppo(
     print(f"Total Timesteps: {total_timesteps:,}")
     print(f"Learning Rate: {learning_rate}")
     print(f"SITL connection: tcp:127.0.0.1:5760 (speedup=5 required)")
+    print(f"Resume from:  {resume_path if resume_path else 'N/A (new training)'}")
     print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
     print("=" * 60)
 
@@ -98,32 +100,47 @@ def train_ppo(
         name_prefix=f'ppo_{mission_type}'
     )
 
-    # Create PPO model
-    model = PPO(
-        'MlpPolicy',
-        env,
-        learning_rate=learning_rate,
-        n_steps=2048,
-        batch_size=64,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        verbose=1,
-        tensorboard_log=f'{log_dir}/ppo_{mission_type}',
-        device='auto'
-    )
+    # Create or load PPO model
+    if resume_path:
+        print(f"\nLoading model from {resume_path} ...")
+        model = PPO.load(
+            resume_path,
+            env=env,
+            learning_rate=learning_rate,
+            tensorboard_log=f'{log_dir}/ppo_{mission_type}',
+            device='auto'
+        )
+        print(f"Resuming from step {model.num_timesteps:,}")
+    else:
+        model = PPO(
+            'MlpPolicy',
+            env,
+            learning_rate=learning_rate,
+            n_steps=2048,
+            batch_size=64,
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.01,
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            verbose=1,
+            tensorboard_log=f'{log_dir}/ppo_{mission_type}',
+            device='auto'
+        )
 
     # Train
-    print("\n🚀 Starting training...")
+    # When resuming, reset_num_timesteps=False preserves the step counter so
+    # TensorBoard logs are continuous and checkpoints use correct step numbers.
+    is_resume = resume_path is not None
+    print("\nStarting training...")
     try:
         model.learn(
             total_timesteps=total_timesteps,
             callback=[checkpoint_callback],
-            progress_bar=True
+            progress_bar=True,
+            reset_num_timesteps=not is_resume
         )
 
         # Save final model
@@ -230,6 +247,8 @@ if __name__ == '__main__':
                         help='Path to trained model (for testing)')
     parser.add_argument('--n-episodes', type=int, default=10,
                         help='Number of test episodes')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume training from (e.g. models/ppo_obstacle_avoidance_30000_steps.zip)')
 
     args = parser.parse_args()
 
@@ -237,7 +256,8 @@ if __name__ == '__main__':
         train_ppo(
             mission_type=args.mission,
             total_timesteps=args.timesteps,
-            learning_rate=args.lr
+            learning_rate=args.lr,
+            resume_path=args.resume
         )
     else:  # test
         if args.model_path is None:
