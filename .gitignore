@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -30,6 +29,8 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.local/
+.cache/
 
 # IDEs
 .vscode/
@@ -43,15 +44,26 @@ venv.bak/
 .ipynb_checkpoints/
 *.ipynb
 
-# Data and Logs
-data/logs/**/*.csv
-data/logs/**/*.tfevents.*
-data/checkpoints/**/*.zip
-data/checkpoints/**/best_model/
-data/recordings/**/*.mp4
-data/recordings/**/*.avi
+# Logs and training artifacts
 *.log
 *.bag
+logs/
+rl_training/logs/
+rl_training/models/
+wandb/
+tensorboard/
+mlruns/
+
+# SITL runtime files
+eeprom.bin
+mav.tlog
+mav.tlog.raw
+terrain/
+
+# Data
+data/logs/
+data/checkpoints/
+data/recordings/
 
 # Temporary files
 *.tmp
@@ -62,31 +74,6 @@ data/recordings/**/*.avi
 .coverage
 htmlcov/
 
-# Docker
-.dockerignore
-
 # OS
 Thumbs.db
 .DS_Store
-
-# Keep directory structure but ignore content
-data/logs/.gitkeep
-data/checkpoints/.gitkeep
-data/recordings/.gitkeep
-
-# AirSim
-Documents/AirSim/
-
-# Training artifacts
-wandb/
-tensorboard/
-mlruns/
-=======
-.local/
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
-.local/
-.cache/
-__pycache__/
->>>>>>> 74e4cbb311d6507a0cb905c6d4851f53cc4aab1d
