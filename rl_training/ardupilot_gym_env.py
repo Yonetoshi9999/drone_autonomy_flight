@@ -67,7 +67,7 @@ class ArduPilotMode99Env(gym.Env):
         sitl_connection: str = 'tcp:127.0.0.1:5760',
         mission_type: str = 'obstacle_avoidance',
         max_steps: int = 1000,
-        goal_radius: float = 1.0,
+        goal_radius: float = 5.0,
         time_scale: float = 1.0,
         enable_obstacles: bool = True
     ):
@@ -100,12 +100,13 @@ class ArduPilotMode99Env(gym.Env):
             dtype=np.float32
         )
 
-        # Action space: 4D continuous
-        # [target_x, target_y, target_z, yaw_rate]
+        # Action space: 3D continuous
+        # [delta_x, delta_y, yaw_rate] relative to current position
+        # z (altitude) is NOT controlled by RL — Mode 99 maintains takeoff altitude
         self.action_space = spaces.Box(
-            low=np.array([-100.0, -100.0, -150.0, -3.0]),
-            high=np.array([100.0, 100.0, 0.0, 3.0]),
-            shape=(4,),
+            low=np.array([-5.0, -5.0, -3.0]),
+            high=np.array([5.0, 5.0, 3.0]),
+            shape=(3,),
             dtype=np.float32
         )
 
@@ -115,7 +116,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # Episode state
         self.current_step = 0
-        self.prev_action = np.zeros(4)
+        self.prev_action = np.zeros(3)
         self.goal_position = np.zeros(3)
         self.start_position = np.zeros(3)
         self.episode_reward = 0.0
@@ -158,12 +159,13 @@ class ArduPilotMode99Env(gym.Env):
 
     def request_data_streams(self):
         """Request telemetry data streams at specified rates"""
-        # Position data (LOCAL_POSITION_NED) at 10Hz
+        # Position data (LOCAL_POSITION_NED) at 50Hz
+        # SITL speedup=5 → 50Hz sim = 10Hz real, matching gym step rate
         self.mav.mav.request_data_stream_send(
             self.mav.target_system,
             self.mav.target_component,
             mavutil.mavlink.MAV_DATA_STREAM_POSITION,
-            10,
+            50,
             1
         )
         # Extended status (GPS_RAW_INT, SYS_STATUS) at 5Hz
@@ -210,7 +212,7 @@ class ArduPilotMode99Env(gym.Env):
         # Reset episode counters
         self.current_step = 0
         self.episode_reward = 0.0
-        self.prev_action = np.zeros(4)
+        self.prev_action = np.zeros(3)
 
         # Goal and obstacles are placed after M99_REF capture below,
         # relative to the drone's actual episode-start position.
@@ -334,21 +336,49 @@ class ArduPilotMode99Env(gym.Env):
         self._mode99_ref = np.array([ref_n, ref_e, ref_d], dtype=np.float32)
         print(f"  Mode 99 reference: N={ref_n:.2f} E={ref_e:.2f} D={ref_d:.2f} (alt={-ref_d:.2f}m)")
 
+        # Wait for drone to stabilize (low vertical velocity) before starting episode
+        # Then use the actual stable altitude as target_z (not mode99_ref which may differ)
+        print("  Waiting for altitude stabilization...")
+        stable_count = 0
+        for _ in range(200):  # max 10s real time
+            self.update_telemetry()
+            pos = self.telemetry['position']
+            vel = self.telemetry['velocity']
+            # Only require valid altitude (above 5m) and low vertical velocity
+            if pos[2] < -5.0 and abs(vel[2]) < 0.5:
+                stable_count += 1
+                if stable_count >= 5:
+                    # Update ref_d to actual stable altitude
+                    self._mode99_ref[2] = pos[2]
+                    ref_d = pos[2]
+                    print(f"  Stabilized at alt={-pos[2]:.1f}m vel_z={vel[2]:.2f}m/s")
+                    break
+            else:
+                stable_count = 0
+            self.send_position_target(position=np.array([pos[0], pos[1], ref_d]))
+            time.sleep(0.05 / self.time_scale)
+        else:
+            if pos[2] < -5.0:
+                self._mode99_ref[2] = pos[2]
+                ref_d = pos[2]
+            print(f"  Stabilization timeout, using alt={-ref_d:.1f}m")
+
         # Set goal and obstacles relative to drone's episode-start NE position.
         # This keeps training consistent regardless of how far the drone drifted
         # between episodes during LAND mode.
         origin_ne = self._mode99_ref[:2]
+        origin_d = self._mode99_ref[2]  # drone's altitude in NED (e.g. -43m)
         if self.mission_type == 'obstacle_avoidance':
             self.goal_position = np.array([
                 origin_ne[0] + self.np_random.uniform(20, 50),
                 origin_ne[1] + self.np_random.uniform(-10, 10),
-                -self.np_random.uniform(5, 15)
+                origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
             ], dtype=np.float32)
         else:  # waypoint_navigation
             self.goal_position = np.array([
                 origin_ne[0] + self.np_random.uniform(-50, 50),
                 origin_ne[1] + self.np_random.uniform(-50, 50),
-                -self.np_random.uniform(5, 20)
+                origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
             ], dtype=np.float32)
         self._obstacles = []
         if self.enable_obstacles:
@@ -385,10 +415,24 @@ class ArduPilotMode99Env(gym.Env):
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
         # Send position/velocity/yaw command to Mode 99
+        # RL controls horizontal (N, E) only; z fixed at takeoff altitude
+        current_pos = self.telemetry['position']
+        target_pos = np.array([
+            current_pos[0] + action[0],   # delta_N
+            current_pos[1] + action[1],   # delta_E
+            self._mode99_ref[2]            # z fixed at takeoff altitude
+        ], dtype=np.float32)
         self.send_position_target(
-            position=action[:3],
-            yaw_rate=action[3]
+            position=target_pos,
+            yaw_rate=action[2]
         )
+
+        # Log altitude every 100 steps to track trajectory
+        if self.current_step % 100 == 0:
+            pos = self.telemetry['position']
+            vel = self.telemetry['velocity']
+            mode = self.telemetry['mode']
+            print(f"  [step {self.current_step:4d}] alt={-pos[2]:.1f}m vel_z={vel[2]:.1f}m/s mode={mode} target_z={target_pos[2]:.1f}")
 
         # Wait for control period (20Hz = 50ms)
         time.sleep(0.05 / self.time_scale)
@@ -406,6 +450,28 @@ class ArduPilotMode99Env(gym.Env):
         # Check termination conditions
         terminated = self.is_terminated()
         truncated = self.current_step >= self.max_steps
+
+        # Log episode end reason
+        if terminated or truncated:
+            goal_relative = self.goal_position - self.telemetry['position']
+            goal_dist = np.linalg.norm(goal_relative)
+            pos = self.telemetry['position']
+            vel = self.telemetry['velocity']
+            speed = np.linalg.norm(vel)
+            goal = self.goal_position
+            print(f"  pos=({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f}) "
+                  f"vel=({vel[0]:.1f}, {vel[1]:.1f}, {vel[2]:.1f}) speed={speed:.1f}m/s "
+                  f"goal=({goal[0]:.1f}, {goal[1]:.1f}, {goal[2]:.1f})")
+            if goal_dist < self.goal_radius:
+                print(f"🎯 GOAL REACHED! step={self.current_step} reward={self.episode_reward:.1f}")
+            elif np.any(self.telemetry['obstacles'] < 1.0):
+                print(f"💥 CRASH! step={self.current_step} reward={self.episode_reward:.1f}")
+            elif self.telemetry['position'][2] > -5.0:
+                print(f"🌍 GROUND! step={self.current_step} reward={self.episode_reward:.1f}")
+            elif not self.telemetry['armed']:
+                print(f"⚠️ DISARMED! step={self.current_step} reward={self.episode_reward:.1f}")
+            else:
+                print(f"⏱️ TIMEOUT! step={self.current_step} reward={self.episode_reward:.1f} goal_dist={goal_dist:.1f}m")
 
         # Additional info
         info = self.get_info()
@@ -453,6 +519,7 @@ class ArduPilotMode99Env(gym.Env):
             4. Crash penalty
             5. Energy penalty
             6. Smoothness penalty
+            7. Tilt penalty (>10deg)
         """
         reward = 0.0
 
@@ -463,7 +530,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # 2. Goal reached bonus
         if goal_dist < self.goal_radius:
-            reward += 100.0
+            reward += 500.0
 
         # 3. Obstacle penalty (exponential decay)
         obstacles = obs[15:21]  # Extract obstacle distances
@@ -473,7 +540,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # 4. Crash detection (any obstacle < 1m)
         if np.any(obstacles < 1.0):
-            reward -= 1000.0
+            reward -= 500.0
 
         # 5. Energy penalty (velocity magnitude)
         velocity = obs[3:6]
@@ -482,6 +549,15 @@ class ArduPilotMode99Env(gym.Env):
         # 6. Smoothness penalty (action changes)
         delta_action = action - self.prev_action
         reward -= 0.05 * np.linalg.norm(delta_action)
+
+        # 7. Tilt penalty (encourage level flight to maintain altitude)
+        # obs[6:9] = [roll, pitch, yaw]
+        roll = obs[6]
+        pitch = obs[7]
+        tilt = np.sqrt(roll**2 + pitch**2)  # combined tilt angle (rad)
+        max_tilt = 0.174  # ~10 degrees in radians
+        if tilt > max_tilt:
+            reward -= 20.0 * (tilt - max_tilt)
 
         return reward
 
@@ -494,6 +570,10 @@ class ArduPilotMode99Env(gym.Env):
 
         # Crashed (any obstacle < 1m)
         if np.any(self.telemetry['obstacles'] < 1.0):
+            return True
+
+        # Ground contact (altitude below 5m)
+        if self.telemetry['position'][2] > -5.0:
             return True
 
         # Disarmed unexpectedly
@@ -535,9 +615,10 @@ class ArduPilotMode99Env(gym.Env):
         else:
             n = float(self.np_random.uniform(-45.0, 45.0)) + origin_ne[0]
             e = float(self.np_random.uniform(-45.0, 45.0)) + origin_ne[1]
-        # Vertical column spanning flight altitude range (D=0 to D=-20)
-        center = np.array([n, e, -10.0], dtype=np.float32)
-        half_size = np.array([1.0, 1.0, 10.0], dtype=np.float32)
+        # Vertical column spanning drone's flight altitude range
+        origin_d = self._mode99_ref[2]  # e.g. -43m
+        center = np.array([n, e, origin_d], dtype=np.float32)
+        half_size = np.array([1.0, 1.0, 10.0], dtype=np.float32)  # ±10m vertically
         return center, half_size
 
     def _compute_obstacle_distances(self) -> np.ndarray:
