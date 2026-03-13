@@ -557,7 +557,7 @@ class ArduPilotMode99Env(gym.Env):
         tilt = np.sqrt(roll**2 + pitch**2)  # combined tilt angle (rad)
         max_tilt = 0.174  # ~10 degrees in radians
         if tilt > max_tilt:
-            reward -= 5.0 * (tilt - max_tilt)
+            reward -= 8.0 * (tilt - max_tilt)
 
         # 8. Altitude maintenance bonus (stay within 3m of target altitude)
         current_alt = -obs[2]  # NED z → altitude (positive = up)
