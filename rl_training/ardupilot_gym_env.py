@@ -121,7 +121,7 @@ class ArduPilotMode99Env(gym.Env):
         self.goal_position = np.zeros(3)
         self.start_position = np.zeros(3)
         self.episode_reward = 0.0
-        self._target_pos_ne = np.zeros(2)  # integrated position target (N, E)
+        self._target_pos = np.zeros(3)  # integrated position target (N, E, D)
 
         # Telemetry data
         self.telemetry = {
@@ -215,7 +215,7 @@ class ArduPilotMode99Env(gym.Env):
         self.current_step = 0
         self.episode_reward = 0.0
         self.prev_action = np.zeros(4)
-        self._target_pos_ne = np.zeros(2)  # reset; will be set after M99_REF capture
+        self._target_pos = np.zeros(3)  # reset; will be set after M99_REF capture
 
         # Goal and obstacles are placed after M99_REF capture below,
         # relative to the drone's actual episode-start position.
@@ -368,7 +368,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # Initialize integrated position target to drone's actual start position
         start_pos = self.telemetry['position']
-        self._target_pos_ne = np.array([start_pos[0], start_pos[1]], dtype=np.float32)
+        self._target_pos = np.array([start_pos[0], start_pos[1], start_pos[2]], dtype=np.float32)
 
         # Set goal and obstacles relative to drone's episode-start NE position.
         # This keeps training consistent regardless of how far the drone drifted
@@ -421,17 +421,19 @@ class ArduPilotMode99Env(gym.Env):
         # Clip action to valid range
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
-        # Send position offset to Mode 99
-        # vel_ref = 0 → LQR actively drives velocity to zero → stable hover at target
+        # Integrated position target: target moves independently of drone position
+        # This prevents the target from drifting away with the drone at high speed.
+        # LQR sees a fixed target → drives velocity to zero → no runaway acceleration.
         # action[0]=delta_N, action[1]=delta_E, action[2]=delta_D, action[3]=yaw_rate
-        current_pos = self.telemetry['position']
-        hold_pos = np.array([
-            current_pos[0] + action[0],
-            current_pos[1] + action[1],
-            current_pos[2] + action[2]
-        ], dtype=np.float32)
+        self._target_pos[0] += action[0]
+        self._target_pos[1] += action[1]
+        self._target_pos[2] += action[2]
+        # Clamp target altitude: keep within ±10m of takeoff altitude (NED: D is negative)
+        # ref_d ≈ -43m → clamp to [-53m, -33m] (53m max, 33m min altitude)
+        ref_d = self._mode99_ref[2]
+        self._target_pos[2] = np.clip(self._target_pos[2], ref_d - 10.0, ref_d + 10.0)
         self.send_position_target(
-            position=hold_pos,
+            position=self._target_pos.copy(),
             yaw_rate=action[3]
         )
 
@@ -444,7 +446,8 @@ class ArduPilotMode99Env(gym.Env):
             att = self.telemetry['attitude']
             tilt_deg = np.degrees(np.sqrt(att[0]**2 + att[1]**2))
             speed_h = np.sqrt(vel[0]**2 + vel[1]**2)
-            print(f"  [step {self.current_step:4d}] alt={-pos[2]:.1f}m vel_z={vel[2]:.2f} spd_h={speed_h:.1f}m/s mode={mode} dpos=({action[0]:.2f},{action[1]:.2f},{action[2]:.2f}) thrust={lqi_thrust:.1f}N tilt={tilt_deg:.1f}°")
+            tgt_err = np.linalg.norm(self._target_pos - pos)
+            print(f"  [step {self.current_step:4d}] alt={-pos[2]:.1f}m vel_z={vel[2]:.2f} spd_h={speed_h:.1f}m/s tilt={tilt_deg:.1f}° thrust={lqi_thrust:.1f}N tgt_err={tgt_err:.1f}m mode={mode}")
 
         # Wait for control period (20Hz = 50ms)
         time.sleep(0.05 / self.time_scale)
