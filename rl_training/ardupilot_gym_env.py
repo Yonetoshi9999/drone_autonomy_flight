@@ -598,7 +598,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # 2. Goal reached bonus
         if goal_dist < self.goal_radius:
-            reward += 500.0
+            reward += 1000.0
 
         # 3. Obstacle penalty (exponential decay)
         obstacles = obs[15:21]  # Extract obstacle distances
@@ -626,9 +626,18 @@ class ArduPilotMode99Env(gym.Env):
         max_tilt = 0.174  # ~10 degrees in radians
         if tilt > max_tilt:
             reward -= 8.0 * (tilt - max_tilt)
-        # Hard penalty for extreme tilt (> 45°): approaching flip
+        # Hard penalty for extreme tilt (> 60°): approaching flip
         if tilt > np.radians(60.0):
             reward -= 200.0
+
+        # 7b. Danger zone penalty: tilt × speed product (FLIP precursor signal).
+        # High tilt while moving fast is the leading indicator of FLIP.
+        # penalty = k * tilt(rad) * horiz_speed(m/s)
+        # Safe  (8°,  1.5m/s): -0.6/step  → acceptable
+        # Warn  (20°, 4.0m/s): -4.2/step  → noticeable
+        # Danger(40°, 6.0m/s): -12.6/step → strong signal
+        horiz_speed = np.sqrt(velocity[0]**2 + velocity[1]**2)
+        reward -= 3.0 * tilt * horiz_speed
 
         # 8. Altitude maintenance (penalty for error + bonus for being close)
         current_alt = -obs[2]  # NED z → altitude (positive = up)
