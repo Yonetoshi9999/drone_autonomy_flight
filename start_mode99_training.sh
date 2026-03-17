@@ -28,6 +28,8 @@ RESUME=""
 SITL_ONLY=false
 NO_REBUILD=""
 NO_OBSTACLES=""
+GOAL_MIN=""
+GOAL_MAX=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -38,6 +40,8 @@ while [[ $# -gt 0 ]]; do
         --sitl-only)     SITL_ONLY=true;            shift ;;
         --no-rebuild)    NO_REBUILD="--no-rebuild"; shift ;;
         --no-obstacles)  NO_OBSTACLES="--no-obstacles"; shift ;;
+        --goal-min)      GOAL_MIN="--goal-min $2";  shift 2 ;;
+        --goal-max)      GOAL_MAX="--goal-max $2";  shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -139,6 +143,42 @@ if [ -n "$RESUME" ]; then
     if [ ! -f "$RESUME_ABS" ] && [ ! -f "${RESUME_ABS}.zip" ]; then
         RESUME_ABS="$(realpath "$RESUME" 2>/dev/null || echo "$RESUME")"
     fi
+
+    # ── Validate action space before launching SITL ─────────────────────────────
+    echo "  Checking action space of resume model..."
+    RESUME_CHECK="$RESUME_ABS"
+    [[ "$RESUME_CHECK" != *.zip ]] && RESUME_CHECK="${RESUME_CHECK}.zip"
+    ACTION_DIM=$(python3 -c "
+import zipfile, json, sys
+try:
+    with zipfile.ZipFile('$RESUME_CHECK') as z:
+        data = json.loads(z.read('data'))
+    asp = data['action_space']
+    # SB3 stores action_space as a dict with _shape or directly
+    shape = asp.get('_shape') or asp.get('shape') or []
+    print(shape[0] if shape else '?')
+except Exception as e:
+    print('?')
+" 2>/dev/null)
+    ENV_DIM=$(python3 -c "
+import sys; sys.path.insert(0, '.')
+from ardupilot_gym_env import ArduPilotMode99Env
+import inspect, re
+src = inspect.getsource(ArduPilotMode99Env.__init__)
+m = re.search(r'shape=\((\d+),\)', src)
+print(m.group(1) if m else '?')
+" 2>/dev/null)
+    echo "  Model action_dim=$ACTION_DIM  Env action_dim=$ENV_DIM"
+    if [ "$ACTION_DIM" != "?" ] && [ "$ENV_DIM" != "?" ] && [ "$ACTION_DIM" != "$ENV_DIM" ]; then
+        echo "❌ Action space mismatch! Model=$ACTION_DIM, Env=$ENV_DIM"
+        echo "   Use a checkpoint that matches the current environment (action_dim=$ENV_DIM)."
+        echo "   Latest checkpoints:"
+        ls -lt "$TRAINING_DIR/models/"*_steps.zip 2>/dev/null | head -5 | awk '{print "     " $NF}'
+        exit 1
+    fi
+    echo "  ✅ Action space OK (dim=$ENV_DIM)"
+    # ────────────────────────────────────────────────────────────────────────────
+
     RESUME_ARG="--resume $RESUME_ABS"
     echo "  Resuming from: $RESUME_ABS"
 fi
@@ -149,4 +189,6 @@ python3 -u train_mode99_rl.py \
     --timesteps "$TIMESTEPS" \
     --lr "$LR" \
     $RESUME_ARG \
-    $NO_OBSTACLES
+    $NO_OBSTACLES \
+    $GOAL_MIN \
+    $GOAL_MAX

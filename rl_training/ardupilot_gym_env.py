@@ -69,7 +69,9 @@ class ArduPilotMode99Env(gym.Env):
         max_steps: int = 1000,
         goal_radius: float = 5.0,
         time_scale: float = 1.0,
-        enable_obstacles: bool = True
+        enable_obstacles: bool = True,
+        goal_dist_min: float = 5.0,
+        goal_dist_max: float = 15.0
     ):
         """
         Initialize ArduPilot Mode 99 Gym Environment
@@ -81,6 +83,8 @@ class ArduPilotMode99Env(gym.Env):
             goal_radius: Distance threshold for goal reaching (meters)
             time_scale: Simulation speed multiplier
             enable_obstacles: Whether to include obstacles
+            goal_dist_min: Minimum goal distance (meters)
+            goal_dist_max: Maximum goal distance (meters)
         """
         super().__init__()
 
@@ -90,6 +94,8 @@ class ArduPilotMode99Env(gym.Env):
         self.goal_radius = goal_radius
         self.time_scale = time_scale
         self.enable_obstacles = enable_obstacles
+        self.goal_dist_min = goal_dist_min
+        self.goal_dist_max = goal_dist_max
 
         # State space: 26D continuous
         # pos(3) + vel(3) + att(3) + rates(3) + battery(1) + gps(4) + obstacles(6) + goal_rel(3)
@@ -398,16 +404,17 @@ class ArduPilotMode99Env(gym.Env):
         # between episodes during LAND mode.
         origin_ne = self._mode99_ref[:2]
         origin_d = self._mode99_ref[2]  # drone's altitude in NED (e.g. -43m)
+        half = self.goal_dist_max / 2.0
         if self.mission_type == 'obstacle_avoidance':
             self.goal_position = np.array([
-                origin_ne[0] + self.np_random.uniform(5, 15),
-                origin_ne[1] + self.np_random.uniform(-10, 10),
+                origin_ne[0] + self.np_random.uniform(self.goal_dist_min, self.goal_dist_max),
+                origin_ne[1] + self.np_random.uniform(-half, half),
                 origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
             ], dtype=np.float32)
         else:  # waypoint_navigation
             self.goal_position = np.array([
-                origin_ne[0] + self.np_random.uniform(-25, 25),
-                origin_ne[1] + self.np_random.uniform(-25, 25),
+                origin_ne[0] + self.np_random.uniform(-half, half),
+                origin_ne[1] + self.np_random.uniform(-half, half),
                 origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
             ], dtype=np.float32)
         self._obstacles = []

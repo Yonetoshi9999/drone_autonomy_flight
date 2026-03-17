@@ -16,7 +16,7 @@ from ardupilot_gym_env import ArduPilotMode99Env
 
 
 def make_env(rank: int, seed: int = 0, mission_type: str = 'obstacle_avoidance',
-             enable_obstacles: bool = True):
+             enable_obstacles: bool = True, goal_dist_min: float = 5.0, goal_dist_max: float = 15.0):
     """
     Create a single environment
 
@@ -25,6 +25,8 @@ def make_env(rank: int, seed: int = 0, mission_type: str = 'obstacle_avoidance',
         seed: Random seed
         mission_type: Type of mission
         enable_obstacles: Whether to include obstacles (False for Phase 1 curriculum)
+        goal_dist_min: Minimum goal distance (meters)
+        goal_dist_max: Maximum goal distance (meters)
 
     Returns:
         Function that creates the environment
@@ -36,7 +38,9 @@ def make_env(rank: int, seed: int = 0, mission_type: str = 'obstacle_avoidance',
             max_steps=1000,
             goal_radius=5.0,
             time_scale=5.0,  # Speed up simulation 5x
-            enable_obstacles=enable_obstacles
+            enable_obstacles=enable_obstacles,
+            goal_dist_min=goal_dist_min,
+            goal_dist_max=goal_dist_max
         )
         env = Monitor(env)
         env.reset(seed=seed + rank)
@@ -52,7 +56,9 @@ def train_ppo(
     save_dir: str = './models',
     log_dir: str = './logs',
     resume_path: str = None,
-    enable_obstacles: bool = True
+    enable_obstacles: bool = True,
+    goal_dist_min: float = 5.0,
+    goal_dist_max: float = 15.0
 ):
     """
     Train PPO agent against ArduPilot SITL + Mode 99 LQR.
@@ -88,13 +94,15 @@ def train_ppo(
     print(f"Total Timesteps: {total_timesteps:,}")
     print(f"Learning Rate: {learning_rate}")
     print(f"Obstacles: {'enabled' if enable_obstacles else 'disabled (Phase 1 curriculum)'}")
+    print(f"Goal distance: {goal_dist_min}-{goal_dist_max}m")
     print(f"SITL connection: tcp:127.0.0.1:5760 (speedup=5 required)")
     print(f"Resume from:  {resume_path if resume_path else 'N/A (new training)'}")
     print(f"Device: CPU (forced — MLP policy runs faster on CPU)")
     print("=" * 60)
 
     # Single training environment (n_envs=1 enforced above)
-    env = DummyVecEnv([make_env(0, mission_type=mission_type, enable_obstacles=enable_obstacles)])
+    env = DummyVecEnv([make_env(0, mission_type=mission_type, enable_obstacles=enable_obstacles,
+                                goal_dist_min=goal_dist_min, goal_dist_max=goal_dist_max)])
     # Normalize rewards to stabilize value function learning.
     # norm_obs=False: observations have meaningful physical units; don't scale them.
     # clip_reward=10: cap normalized reward to prevent outliers from destabilizing training.
@@ -268,6 +276,10 @@ if __name__ == '__main__':
                         help='Path to checkpoint to resume training from (e.g. models/ppo_obstacle_avoidance_30000_steps.zip)')
     parser.add_argument('--no-obstacles', action='store_true',
                         help='Disable obstacles (Phase 1 curriculum: learn goal reaching first)')
+    parser.add_argument('--goal-min', type=float, default=5.0,
+                        help='Minimum goal distance in meters (default: 5.0)')
+    parser.add_argument('--goal-max', type=float, default=15.0,
+                        help='Maximum goal distance in meters (default: 15.0)')
 
     args = parser.parse_args()
 
@@ -277,7 +289,9 @@ if __name__ == '__main__':
             total_timesteps=args.timesteps,
             learning_rate=args.lr,
             resume_path=args.resume,
-            enable_obstacles=not args.no_obstacles
+            enable_obstacles=not args.no_obstacles,
+            goal_dist_min=args.goal_min,
+            goal_dist_max=args.goal_max
         )
     else:  # test
         if args.model_path is None:
