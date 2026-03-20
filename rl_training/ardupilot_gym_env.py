@@ -111,8 +111,8 @@ class ArduPilotMode99Env(gym.Env):
         # delta_D > 0 = lower target altitude, delta_D < 0 = raise target altitude (NED)
         # Velocity reference is always ZERO → LQR drives velocity to zero → no flip
         self.action_space = spaces.Box(
-            low=np.array([-0.15, -0.15, -0.15, -0.15]),
-            high=np.array([0.15, 0.15, 0.15, 0.15]),
+            low=np.array([-0.3, -0.3, -0.3, -0.3]),
+            high=np.array([0.3, 0.3, 0.3, 0.3]),
             shape=(4,),
             dtype=np.float32
         )
