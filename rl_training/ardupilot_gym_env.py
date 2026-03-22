@@ -667,13 +667,17 @@ class ArduPilotMode99Env(gym.Env):
             if dist_improvement > 0:
                 reward += 1.0 * dist_improvement
 
-        # 11. Velocity toward goal bonus
+        # 11. Velocity toward goal bonus (capped at 5m/s to avoid encouraging overspeeding)
         velocity = obs[3:6]
         if goal_dist > 1e-6:
             goal_dir = goal_relative / goal_dist
             vel_toward_goal = np.dot(velocity, goal_dir)
             if vel_toward_goal > 0:
-                reward += 0.3 * vel_toward_goal
+                reward += 0.3 * min(vel_toward_goal, 5.0)
+
+        # 12. Speed penalty (horiz_speed > 5m/s increases FLIP risk significantly)
+        if horiz_speed > 5.0:
+            reward -= 0.5 * (horiz_speed - 5.0) ** 2
 
         return reward
 
