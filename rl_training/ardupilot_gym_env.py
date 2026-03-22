@@ -488,10 +488,15 @@ class ArduPilotMode99Env(gym.Env):
         if dist_ne > MAX_TARGET_DIST:
             self._target_pos[:2] = current_pos[:2] + tgt_ne * (MAX_TARGET_DIST / dist_ne)
 
-        # vel_ref = 0: LQR sees full velocity as error → maximum braking force.
+        # Smooth vel_ref: blend from 0 to current_vel as speed approaches MAX_GATE_SPEED.
+        # At low speed: vel_ref=0 (LQR actively controls velocity).
+        # At high speed: vel_ref=current_vel (LQR applies no braking, drone decelerates naturally).
+        # This prevents aggressive LQR braking at high speed which causes FLIP.
+        alpha = min(horiz_speed / MAX_GATE_SPEED, 1.0)
+        vel_ref = current_vel * alpha
         self.send_position_target(
             position=self._target_pos.copy(),
-            velocity=np.zeros(3, dtype=np.float32),
+            velocity=vel_ref.astype(np.float32),
             yaw_rate=action[3]
         )
 
