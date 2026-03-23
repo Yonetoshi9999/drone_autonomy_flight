@@ -463,17 +463,19 @@ class ArduPilotMode99Env(gym.Env):
         current_vel = self.telemetry['velocity']
         horiz_speed = np.sqrt(current_vel[0]**2 + current_vel[1]**2)
 
-        # Speed gate: freeze N/E target when moving too fast to prevent LQR over-tilt.
-        # Lower gate (1.5 m/s) catches the drone while tilt is still small (~7°),
-        # giving LQR time to brake before momentum builds.
-        MAX_GATE_SPEED = 1.5  # m/s (was 3.0)
-        if horiz_speed > MAX_GATE_SPEED:
-            # Freeze N/E target at current drone position; still allow altitude action
-            self._target_pos[0] = current_pos[0]
-            self._target_pos[1] = current_pos[1]
-        else:
+        # Speed gate: manage N/E target based on current speed.
+        #   < GATE_SPEED  : advance target by action (normal RL control)
+        #   >= GATE_SPEED : freeze target (do NOT update) so the drone overshoots it.
+        # When frozen, drone moves forward while target stays put → pos_error points
+        # backward → Mode 99 LQR sees a deceleration command (B effect).
+        # Combined with Mode 99's forward pos_error suppressor (A):
+        #   - A prevents acceleration when target is still ahead
+        #   - B creates active braking once drone overshoots the frozen target
+        MAX_GATE_SPEED = 5.0  # m/s — unified with Mode 99 MAX_HORIZ_SPEED and reward threshold
+        if horiz_speed <= MAX_GATE_SPEED:
             self._target_pos[0] += action[0]
             self._target_pos[1] += action[1]
+        # else: target frozen — pos_error grows backward as drone moves forward → braking
         self._target_pos[2] += action[2]
         # Clamp target altitude: keep within ±10m of takeoff altitude (NED: D is negative)
         ref_d = self._mode99_ref[2]
