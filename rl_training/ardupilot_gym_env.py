@@ -471,31 +471,33 @@ class ArduPilotMode99Env(gym.Env):
         # Combined with Mode 99's forward pos_error suppressor (A):
         #   - A prevents acceleration when target is still ahead
         #   - B creates active braking once drone overshoots the frozen target
-        MAX_GATE_SPEED = 5.0  # m/s — unified with Mode 99 MAX_HORIZ_SPEED and reward threshold
+        # Target management: advance when slow, freeze when fast.
+        # Frozen target creates backward pos_error as drone overshoots → LQR brakes.
+        MAX_GATE_SPEED = 2.0  # m/s — freeze target above this speed
         if horiz_speed <= MAX_GATE_SPEED:
             self._target_pos[0] += action[0]
             self._target_pos[1] += action[1]
-        # else: target frozen — pos_error grows backward as drone moves forward → braking
+        # else: target frozen — drone overshoots → backward pos_error → LQR brakes
         self._target_pos[2] += action[2]
-        # Clamp target altitude: keep within ±10m of takeoff altitude (NED: D is negative)
         ref_d = self._mode99_ref[2]
         self._target_pos[2] = np.clip(self._target_pos[2], ref_d - 10.0, ref_d + 10.0)
 
-        # Clamp N/E target to within MAX_TARGET_DIST from drone.
-        # Smaller clamp (1m) limits pos_err → limits tilt from position term.
-        # At 1m pos_err + 1.5m/s vel: LQR tilt ≈ 1.5° + 6.8° = 8.3° (well within safe range).
-        MAX_TARGET_DIST = 1.0  # meters (was 3.0)
+        # Clamp N/E target within MAX_TARGET_DIST of drone to bound pos_error.
+        MAX_TARGET_DIST = 1.0  # meters
         tgt_ne = self._target_pos[:2] - current_pos[:2]
         dist_ne = np.linalg.norm(tgt_ne)
         if dist_ne > MAX_TARGET_DIST:
             self._target_pos[:2] = current_pos[:2] + tgt_ne * (MAX_TARGET_DIST / dist_ne)
 
-        # Smooth vel_ref: blend from 0 to current_vel as speed approaches MAX_GATE_SPEED.
-        # At low speed: vel_ref=0 (LQR actively controls velocity).
-        # At high speed: vel_ref=current_vel (LQR applies no braking, drone decelerates naturally).
-        # This prevents aggressive LQR braking at high speed which causes FLIP.
-        alpha = min(horiz_speed / MAX_GATE_SPEED, 1.0)
-        vel_ref = current_vel * alpha
+        # Velocity feedforward: cap vel_ref at MAX_SPEED in direction of motion.
+        # Below MAX_SPEED: vel_ref = current_vel (no vel_error, position drives control).
+        # Above MAX_SPEED: vel_ref < current_vel → vel_error → Mode 99 brakes.
+        # Mode 99's asymmetric moment limit handles the physical braking.
+        MAX_VEL_REF = 5.0  # m/s
+        if horiz_speed > MAX_VEL_REF:
+            vel_ref = current_vel * (MAX_VEL_REF / horiz_speed)
+        else:
+            vel_ref = current_vel.copy()
         self.send_position_target(
             position=self._target_pos.copy(),
             velocity=vel_ref.astype(np.float32),
