@@ -16,6 +16,7 @@ set -e
 ARDUPILOT_DIR="${ARDUPILOT_DIR:-$HOME/ardupilot}"
 WORKSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARAM_FILE="$WORKSPACE_DIR/configs/ardupilot/params.parm"
+FRAME_MODEL="$WORKSPACE_DIR/configs/ardupilot/quad_2kg.json"
 TRAINING_DIR="$WORKSPACE_DIR/rl_training"
 SITL_PORT=5760   # arducopter binary listens on 5760 directly (no MAVProxy needed)
 SITL_SPEEDUP=5
@@ -83,7 +84,7 @@ fi
 echo ""
 echo "Starting SITL (arducopter binary directly, port $SITL_PORT)..."
 "$ARDUPILOT_DIR/build/sitl/bin/arducopter" \
-    --model + \
+    --model "+:$FRAME_MODEL" \
     --speedup "$SITL_SPEEDUP" \
     --defaults "$ARDUPILOT_DIR/Tools/autotest/default_params/copter.parm,$PARAM_FILE" \
     --sim-address=127.0.0.1 \
