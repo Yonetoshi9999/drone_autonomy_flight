@@ -1,38 +1,54 @@
-# SITL フレームモデルパラメータの変更方法
+# Customizing SITL Physical Parameters with a Frame Model JSON
 
-## 背景：なぜモデルパラメータを合わせる必要があるか
+## Background: Why Physical Parameters Must Match Your Controller
 
-ArduPilot SITLはデフォルトで以下の物理パラメータを使用する：
-
-```
-mass              = 3.0 kg  （ハードコード: SIM_Frame.h line 85）
-moment_of_inertia = mass × diagonal_size² から幾何学的に推定
-```
-
-Mode 99 LQR は `sysid_params.txt` の値（MASS=2.0 kg 等）を使って設計される。
-**このミスマッチが LQR の速度追従精度を低下させ、TILT/FLIP の根本原因となる。**
+ArduPilot SITL uses the following default physical parameters out of the box:
 
 ```
-例: 質量50%ずれの影響
-  LQR が計算したブレーキモーメント → 3.0 kg ドローンへの効果は設計値の 2/3
-  → vel_ref=1.5 m/s でも実速度が 3-4 m/s まで超過
-  → LQR が大きなブレーキモーメントを要求 → ピッチ 40°+ → TILT
+mass              = 3.0 kg  (hardcoded default in SIM_Frame.h line 85)
+moment_of_inertia = estimated from mass × diagonal_size²  (geometric approximation)
 ```
+
+For standard ArduPilot PID controllers this rarely matters — gains are tuned
+empirically (e.g. via AutoTune), so the controller adapts to whatever the SITL
+dynamics happen to be.
+
+**For model-based controllers (LQR, MPC, H-infinity, etc.) it is critical.**
+The gain matrix is computed analytically from the physical model, so any mismatch
+between the model used for design and the model used in simulation produces
+incorrect gains.
+
+### Concrete example: 50 % mass mismatch
+
+```
+LQR designed for:  mass = 2.0 kg  →  braking moment = M_brake
+SITL running with: mass = 3.0 kg  →  effective deceleration = M_brake / 3.0
+                                       (33 % weaker than designed)
+
+Result:
+  vel_ref = 1.5 m/s  but  actual speed reaches 3–4 m/s
+  → LQR requests maximum pitch moment to brake
+  → pitch angle > 40° → TILT / FLIP
+```
+
+The same logic applies to moment-of-inertia mismatches: if SITL estimates inertia
+from geometry while the real vehicle has a measured value, the angular acceleration
+response will differ from the design assumption.
 
 ---
 
-## 解決策：カスタム JSON フレームファイル
+## Solution: Custom Frame Model JSON
 
-ArduPilot SITL は `--model "+:path/to/frame.json"` でカスタム物理モデルを読み込める。
-JSON ファイルで `mass` と `moment_inertia` を直接指定することで LQR 設計値と完全一致させる。
-
-### JSON ファイルの場所
+ArduPilot SITL supports loading a custom physical model via:
 
 ```
-autonomous_drone_sim/configs/ardupilot/quad_2kg.json
+--model "+:/path/to/frame.json"
 ```
 
-### JSON ファイルのフォーマット（主要パラメータ）
+The JSON file overrides any subset of the default frame parameters.
+Only the fields you specify are changed; everything else uses the built-in defaults.
+
+### Minimal JSON to fix mass and inertia
 
 ```json
 {
@@ -44,42 +60,43 @@ autonomous_drone_sim/configs/ardupilot/quad_2kg.json
 }
 ```
 
-| フィールド | 型 | 説明 | sysid_params.txt の対応 |
+| Field | Type | Description | Example |
 |---|---|---|---|
-| `mass` | float | 機体総質量 (kg) | `MASS=2.0` |
-| `diagonal_size` | float | 対角モーター間距離 (m) = 2 × ARM_LENGTH | `ARM_LENGTH=0.225` → `0.45` |
-| `moment_inertia` | [x,y,z] | 慣性モーメント [Ixx, Iyy, Izz] (kg⋅m²) | `IXX, IYY, IZZ` |
-| `hoverThrOut` | float | ホバリングスロットル (0-1) | `THROTTLE_HOVER=0.5` |
-| `num_motors` | int | モーター数 | 4 |
+| `mass` | float | Total vehicle mass (kg) | `2.0` |
+| `diagonal_size` | float | Motor-to-motor diagonal distance (m) = 2 × arm_length | `0.45` |
+| `moment_inertia` | [x,y,z] | Principal moments of inertia [Ixx, Iyy, Izz] (kg·m²) | `[0.0347, 0.0458, 0.0977]` |
+| `hoverThrOut` | float | Hover throttle fraction (0–1) | `0.5` |
+| `num_motors` | int | Number of motors | `4` |
 
-> **注意:** `moment_inertia` が指定されていない（またはゼロ）場合は、
-> `mass × (diagonal_size/2)²` から幾何学的に推定される（精度低い）。
+> **Note:** If `moment_inertia` is absent or zero, SITL estimates it from
+> `mass × (diagonal_size / 2)²`. Specifying it explicitly eliminates this
+> approximation entirely.
 
-### 利用可能な全フィールド（SIM_Frame.cpp より）
+### Full list of available fields (from `SIM_Frame.cpp`)
 
 ```json
 {
-    "mass"          : 2.0,        // kg
-    "diagonal_size" : 0.45,       // m (motor-to-motor diagonal)
-    "moment_inertia": [Ixx, Iyy, Izz],  // kg⋅m²
-    "hoverThrOut"   : 0.5,        // 0-1
-    "refSpd"        : 10.0,       // m/s (drag estimation reference speed)
-    "refAngle"      : 15.0,       // deg (tilt at refSpd)
+    "mass"          : 2.0,        // kg — total vehicle mass
+    "diagonal_size" : 0.45,       // m  — motor-to-motor diagonal
+    "moment_inertia": [Ixx, Iyy, Izz],  // kg·m² — principal moments
+    "hoverThrOut"   : 0.5,        // 0–1 — hover throttle
+    "refSpd"        : 10.0,       // m/s — reference airspeed for drag estimation
+    "refAngle"      : 15.0,       // deg — pitch angle at refSpd
     "refVoltage"    : 22.2,       // V
     "refCurrent"    : 10.0,       // A
     "refAlt"        : 0,          // m AMSL
     "refTempC"      : 25,         // °C
-    "refBatRes"     : 0.02,       // Ω
-    "maxVoltage"    : 25.2,       // V (full battery)
-    "battCapacityAh": 0,          // Ah (0 = unlimited)
-    "propExpo"      : 0.65,       // MOT_THST_EXPO
-    "refRotRate"    : 300,        // deg/s (max yaw rate)
-    "pwmMin"        : 1000,       // μs
-    "pwmMax"        : 2000,       // μs
+    "refBatRes"     : 0.02,       // Ω — battery internal resistance
+    "maxVoltage"    : 25.2,       // V — full-charge voltage
+    "battCapacityAh": 0,          // Ah — 0 means unlimited
+    "propExpo"      : 0.65,       // MOT_THST_EXPO equivalent
+    "refRotRate"    : 300,        // deg/s — maximum yaw rate
+    "pwmMin"        : 1000,       // µs — MOT_PWM_MIN
+    "pwmMax"        : 2000,       // µs — MOT_PWM_MAX
     "spin_min"      : 0.10,       // MOT_SPIN_MIN
     "spin_max"      : 0.95,       // MOT_SPIN_MAX
-    "slew_max"      : 0,          // max motor slew rate (0=disabled)
-    "disc_area"     : 0.203,      // m² (total effective prop disc area)
+    "slew_max"      : 0,          // max motor slew rate (0 = disabled)
+    "disc_area"     : 0.203,      // m² — total effective propeller disc area
     "mdrag_coef"    : 0.10,       // momentum drag coefficient
     "num_motors"    : 4
 }
@@ -87,95 +104,131 @@ autonomous_drone_sim/configs/ardupilot/quad_2kg.json
 
 ---
 
-## 適用方法
+## How to Apply
 
-### 1. arducopter バイナリへの渡し方
-
-```bash
-# --model の引数を "+" から "+:JSON_PATH" に変更
-/path/to/arducopter \
-    --model "+:/path/to/quad_2kg.json" \
-    --defaults copter.parm,params.parm \
-    ...
-```
-
-### 2. start_mode99_training.sh では自動適用済み
+### Passing the JSON to the arducopter binary
 
 ```bash
-# start_mode99_training.sh 内:
-FRAME_MODEL="$WORKSPACE_DIR/configs/ardupilot/quad_2kg.json"
-...
-"$ARDUPILOT_DIR/build/sitl/bin/arducopter" \
-    --model "+:$FRAME_MODEL" \
-    ...
+/path/to/build/sitl/bin/arducopter \
+    --model "+:/absolute/path/to/my_frame.json" \
+    --defaults Tools/autotest/default_params/copter.parm,my_params.parm \
+    --speedup 5 \
+    -I0
 ```
 
-通常のトレーニング起動では自動的に `quad_2kg.json` が読み込まれる。
+The `+` selects the standard X-frame quad type; everything after the colon is
+the path to the JSON file that overrides its parameters.
+
+### Using a relative path
+
+```bash
+# The path is relative to the working directory of the arducopter process.
+--model "+:configs/ardupilot/my_frame.json"
+```
+
+### Existing examples in the ArduPilot repository
+
+`Tools/autotest/models/` already contains two JSON frame files as reference:
+
+| File | Vehicle | mass |
+|---|---|---|
+| `freestyle.json` | 5-inch FPV racing quad | 0.8 kg |
+| `Callisto.json` | Large octocopter | 32.5 kg |
 
 ---
 
-## 動作確認方法
+## Verifying It Worked
 
-SITL 起動直後のログに以下が出力される：
+When SITL loads a JSON file successfully it prints to stdout (also captured in
+`/tmp/sitl_mode99.log` or equivalent):
 
 ```
-Loaded model params from /path/to/quad_2kg.json
+Loaded model params from /path/to/my_frame.json
 Suggested EK3_DRAG_BCOEF_* = XX.XXX, EK3_DRAG_MCOEF = X.XXX
 ```
 
-`/tmp/sitl_mode99.log` で確認：
+Check with:
 
 ```bash
 grep "Loaded model\|Suggested EK3" /tmp/sitl_mode99.log
 ```
 
+If the file path is wrong, ArduPilot will panic at startup:
+
+```
+PANIC: /path/to/my_frame.json failed to load
+```
+
 ---
 
-## パラメータ変更手順（sysid_params.txt が更新された場合）
+## Updating Parameters After Re-identification
 
-1. `sysid_params.txt` の新しい値を確認
-2. `configs/ardupilot/quad_2kg.json` の対応フィールドを更新
-3. `design_lqr_discrete.py` の質量・慣性値も同じ値に更新して `lqr_gains.txt` を再生成
-4. `lqr_gains.txt` を `/tmp/sitl_cowork/` にコピー（または起動スクリプトが自動コピー）
-5. トレーニング再起動
+When system identification is re-run and `sysid_params.txt` (or equivalent) is
+updated, keep the three sources in sync:
+
+| File | Parameters to update |
+|---|---|
+| `configs/ardupilot/my_frame.json` | `mass`, `moment_inertia`, `hoverThrOut` |
+| `design_lqr_discrete.py` (or equivalent) | `mass`, `Ixx`, `Iyy`, `Izz` |
+| `lqr_gains.txt` | regenerate by re-running the LQR design script |
 
 ```bash
-# lqr_gains.txt 再生成
-cd /home/yonetoshi27/autonomous_drone_sim
+# Regenerate LQR gains after updating mass/inertia
 python3 design_lqr_discrete.py
 
-# 確認
-cat lqr_gains.txt | head -5
+# Copy to the path Mode 99 loads at runtime
+cp lqr_gains.txt /tmp/sitl_cowork/lqr_gains.txt
 ```
 
 ---
 
-## 技術メモ
+## Technical Notes
 
-### ArduPilot SITL の物理モデル内部実装
+### Where SITL applies these parameters (ArduPilot source)
 
-- フレームモデルは `libraries/SITL/SIM_Frame.cpp` で実装
-- `Frame::init()` で JSON を読み込み、デフォルト値を上書き
-- `Frame::calculate_forces()` で推力・トルクを計算
-- 角加速度: `rot_accel = torque / moment_of_inertia` （SIM_Frame.cpp line 688-690）
-- 並進加速度: `body_accel = thrust / gross_mass()` （SIM_Frame.cpp line 720）
+| Location | What it does |
+|---|---|
+| `libraries/SITL/SIM_Frame.h:85` | Default `mass = 3.0` |
+| `libraries/SITL/SIM_Frame.cpp:452` | `Frame::load_frame_params()` — parses JSON |
+| `libraries/SITL/SIM_Frame.cpp:630` | Inertia estimation fallback (used when `moment_inertia` is zero) |
+| `libraries/SITL/SIM_Frame.cpp:688` | `rot_accel = torque / moment_of_inertia` |
+| `libraries/SITL/SIM_Frame.cpp:720` | `body_accel = thrust / gross_mass()` |
 
-### diagonal_size の計算
+### Computing `diagonal_size` from arm length
 
-X フレーム（ARM_LENGTH = モーター中心-機体中心距離）の場合：
-
-```
-対角モーター間距離 = 2 × ARM_LENGTH = 2 × 0.225 = 0.45 m
-```
-
-`moment_inertia` を直接指定する場合、`diagonal_size` は抗力推定のみに使われるため精度への影響は小さい。
-
-### disc_area（プロペラ有効面積）の計算
+For a symmetric X-frame where `arm_length` is the center-to-motor distance:
 
 ```
-プロペラ直径 d から:
-  disc_area = 4 × π × (d/2)²
+diagonal_size = 2 × arm_length
+```
 
-10インチプロペラ (d=0.254m) の場合:
+Example: `arm_length = 0.225 m` → `diagonal_size = 0.45 m`
+
+When `moment_inertia` is specified directly, `diagonal_size` only affects the
+aerodynamic drag model (used at higher airspeeds) and has negligible impact on
+hover and low-speed flight dynamics.
+
+### Computing `disc_area` from propeller diameter
+
+```
+disc_area = num_motors × π × (diameter / 2)²
+
+Example: 4 × 10-inch (0.254 m) props
   disc_area = 4 × π × 0.127² ≈ 0.203 m²
 ```
+
+### Impact on model-based controllers
+
+For a controller with gain matrix **K** computed from linearised dynamics:
+
+```
+ẍ = F / m          →  m appears in the B matrix (translational)
+α = M / I          →  I appears in the B matrix (rotational)
+
+If m_SITL ≠ m_model:
+  actual acceleration = K·e / m_SITL  ≠  designed acceleration = K·e / m_model
+  → velocity tracking error accumulates → excessive control effort → instability
+```
+
+Matching SITL parameters to the design model is therefore **a prerequisite for
+validating any model-based flight controller in SITL before deploying to hardware**.
