@@ -83,11 +83,11 @@ def dlqr(Ad, Bd, Q, R):
 # Horizontal position: small (LQR is near hover, large pos error clamped to 2m)
 q_pos_ne  = 0.05    # pos_N, pos_E
 q_pos_d   = 2.0     # pos_D (altitude — important to hold)
-q_vel_ne  = 0.05    # vel_N, vel_E
+q_vel_ne  = 0.5     # vel_N, vel_E  (0.05→0.5: stronger vel braking to overcome rate damping)
 q_vel_d   = 2.0     # vel_D
-q_att_rp  = 10.0    # att roll/pitch (keep level)
+q_att_rp  = 2.0     # att roll/pitch (10.0→2.0: reduce attitude gain to avoid large pitch rates)
 q_att_yaw = 5.0     # att yaw
-q_rate_rp = 20.0    # roll/pitch rate (critical damping — was main flip fix)
+q_rate_rp = 1.5     # roll/pitch rate (20.0→1.5: allow braking; continuous ζ≈0.8 with q_att=2.0)
 q_rate_r  = 0.5     # yaw rate
 q_int_pos_ne = 0.0  # DISABLED: random RL cmds → windup → flip
 q_int_pos_d  = 0.5  # altitude integral (useful for steady-state correction)

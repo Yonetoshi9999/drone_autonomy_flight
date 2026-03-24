@@ -32,8 +32,10 @@ class ArduPilotMode99Env(gym.Env):
         - Goal relative position: [dx, dy, dz]
 
     Action Space (4D):
-        - Target position: [x, y, z] (NED frame, meters)
-        - Yaw rate: yaw_rate (rad/s)
+        - vel_toward_goal: speed toward goal [0, MAX_VEL] m/s (always positive → random policy drives toward goal)
+        - vel_lateral: lateral speed [-MAX_VEL, MAX_VEL] m/s (perpendicular to goal direction, for obstacle avoidance)
+        - vel_D: vertical speed [-MAX_VEL_D, MAX_VEL_D] m/s (NED: positive = descend)
+        - yaw_rate: yaw rate (rad/s)
 
     Reward:
         - Goal reaching: +100
@@ -106,13 +108,18 @@ class ArduPilotMode99Env(gym.Env):
             dtype=np.float32
         )
 
-        # Action space: 4D continuous
-        # [delta_N, delta_E, delta_D, yaw_rate] — position OFFSETS from current position (meters)
-        # delta_D > 0 = lower target altitude, delta_D < 0 = raise target altitude (NED)
-        # Velocity reference is always ZERO → LQR drives velocity to zero → no flip
+        # Action space: 4D continuous — goal-relative coordinate frame
+        # action[0] = vel_toward_goal: [0, MAX_VEL] — always positive, always toward goal
+        #             → even a random policy drives toward goal → eliminates random speed buildup
+        # action[1] = vel_lateral: [-MAX_VEL, MAX_VEL] — perpendicular to goal dir (obstacle avoidance)
+        # action[2] = vel_D: [-MAX_VEL_D, MAX_VEL_D] — vertical (NED: + = descend)
+        # action[3] = yaw_rate: [-0.3, 0.3] rad/s
+        # Converted to NED frame in step() before sending to Mode 99
+        MAX_VEL = 1.5    # m/s horizontal — restored now that random policy is always goal-directed
+        MAX_VEL_D = 0.3  # m/s vertical (conservative)
         self.action_space = spaces.Box(
-            low=np.array([-0.3, -0.3, -0.3, -0.3]),
-            high=np.array([0.3, 0.3, 0.3, 0.3]),
+            low=np.array([0.0,    -MAX_VEL, -MAX_VEL_D, -0.3]),
+            high=np.array([MAX_VEL, MAX_VEL,  MAX_VEL_D,  0.3]),
             shape=(4,),
             dtype=np.float32
         )
@@ -439,7 +446,7 @@ class ArduPilotMode99Env(gym.Env):
         Execute one step in the environment
 
         Args:
-            action: [target_x, target_y, target_z, yaw_rate]
+            action: [vel_toward_goal, vel_lateral, vel_D, yaw_rate]  — goal-relative velocity + yaw rate
 
         Returns:
             observation: Current state
@@ -453,54 +460,54 @@ class ArduPilotMode99Env(gym.Env):
         # Clip action to valid range
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
-        # Integrated position target + velocity feedforward
-        # The key insight: LQR gains are tuned for small perturbations near hover.
-        # Sending vel_ref=0 with a drone at 10 m/s creates huge velocity error → 90°+ tilt.
-        # Fix: send vel_ref = proportional velocity toward the target (capped at MAX_VEL).
-        # This keeps the LQR velocity error small regardless of drone speed.
-        # action[0]=delta_N, action[1]=delta_E, action[2]=delta_D, action[3]=yaw_rate
+        # --- Goal-relative → NED coordinate conversion ---
+        # action[0] = vel_toward_goal: speed in the direction of the goal (always ≥ 0)
+        # action[1] = vel_lateral:     speed perpendicular to goal direction (left/right)
+        # action[2] = vel_D:           vertical speed (NED: + = descend)
+        # action[3] = yaw_rate
+        #
+        # Compute unit vector toward goal in horizontal (NE) plane
         current_pos = self.telemetry['position']
-        current_vel = self.telemetry['velocity']
-        horiz_speed = np.sqrt(current_vel[0]**2 + current_vel[1]**2)
+        goal_rel_h = self.goal_position[:2] - current_pos[:2]  # [dN, dE]
+        goal_dist_h = np.linalg.norm(goal_rel_h)
+        if goal_dist_h > 1e-3:
+            goal_dir = goal_rel_h / goal_dist_h         # unit vector toward goal
+        else:
+            goal_dir = np.array([1.0, 0.0])             # default North when already at goal
+        lateral_dir = np.array([-goal_dir[1], goal_dir[0]])  # 90° left of goal dir
 
-        # Speed gate: manage N/E target based on current speed.
-        #   < GATE_SPEED  : advance target by action (normal RL control)
-        #   >= GATE_SPEED : freeze target (do NOT update) so the drone overshoots it.
-        # When frozen, drone moves forward while target stays put → pos_error points
-        # backward → Mode 99 LQR sees a deceleration command (B effect).
-        # Combined with Mode 99's forward pos_error suppressor (A):
-        #   - A prevents acceleration when target is still ahead
-        #   - B creates active braking once drone overshoots the frozen target
-        # Target management: advance when slow, freeze when fast.
-        # Frozen target creates backward pos_error as drone overshoots → LQR brakes.
-        MAX_GATE_SPEED = 2.0  # m/s — freeze target above this speed
-        if horiz_speed <= MAX_GATE_SPEED:
-            self._target_pos[0] += action[0]
-            self._target_pos[1] += action[1]
-        # else: target frozen — drone overshoots → backward pos_error → LQR brakes
-        self._target_pos[2] += action[2]
+        vel_toward = float(action[0])
+        vel_lat    = float(action[1])
+        vel_cmd = np.array([
+            vel_toward * goal_dir[0] + vel_lat * lateral_dir[0],   # vel_N
+            vel_toward * goal_dir[1] + vel_lat * lateral_dir[1],   # vel_E
+            float(action[2])                                         # vel_D
+        ], dtype=np.float32)
+
+        # Safety cap: prevent diagonal combination from exceeding MAX_VEL_H.
+        # e.g. toward=1.5 + lateral=1.5 would give 2.12 m/s if not clipped.
+        MAX_VEL_H = 1.5
+        h_mag = np.sqrt(vel_cmd[0]**2 + vel_cmd[1]**2)
+        if h_mag > MAX_VEL_H:
+            scale = MAX_VEL_H / h_mag
+            vel_cmd[0] *= scale
+            vel_cmd[1] *= scale
+
+        # Position target = current position (LOOKAHEAD=0).
+        # With LOOKAHEAD>0 the position error was always non-zero, creating a
+        # persistent forward-drive even at target speed. LOOKAHEAD=0 means the
+        # LQR only sees a velocity error, which naturally drives speed toward vel_ref.
+        self._target_pos = current_pos.copy()
+
+        # Altitude clamping: keep within ±10m of takeoff altitude
         ref_d = self._mode99_ref[2]
         self._target_pos[2] = np.clip(self._target_pos[2], ref_d - 10.0, ref_d + 10.0)
 
-        # Clamp N/E target within MAX_TARGET_DIST of drone to bound pos_error.
-        MAX_TARGET_DIST = 1.0  # meters
-        tgt_ne = self._target_pos[:2] - current_pos[:2]
-        dist_ne = np.linalg.norm(tgt_ne)
-        if dist_ne > MAX_TARGET_DIST:
-            self._target_pos[:2] = current_pos[:2] + tgt_ne * (MAX_TARGET_DIST / dist_ne)
-
-        # Velocity feedforward: cap vel_ref at MAX_SPEED in direction of motion.
-        # Below MAX_SPEED: vel_ref = current_vel (no vel_error, position drives control).
-        # Above MAX_SPEED: vel_ref < current_vel → vel_error → Mode 99 brakes.
-        # Mode 99's asymmetric moment limit handles the physical braking.
-        MAX_VEL_REF = 5.0  # m/s
-        if horiz_speed > MAX_VEL_REF:
-            vel_ref = current_vel * (MAX_VEL_REF / horiz_speed)
-        else:
-            vel_ref = current_vel.copy()
+        # Velocity feedforward = commanded velocity (RL has direct speed control)
+        vel_ref = vel_cmd.copy()
         self.send_position_target(
             position=self._target_pos.copy(),
-            velocity=vel_ref.astype(np.float32),
+            velocity=vel_ref,
             yaw_rate=action[3]
         )
 
@@ -513,8 +520,12 @@ class ArduPilotMode99Env(gym.Env):
             att = self.telemetry['attitude']
             tilt_deg = np.degrees(np.sqrt(att[0]**2 + att[1]**2))
             speed_h = np.sqrt(vel[0]**2 + vel[1]**2)
+            speed_3d = np.linalg.norm(vel)
             tgt_err = np.linalg.norm(self._target_pos - pos)
-            print(f"  [step {self.current_step:4d}] alt={-pos[2]:.1f}m vel_z={vel[2]:.2f} spd_h={speed_h:.1f}m/s tilt={tilt_deg:.1f}° thrust={lqi_thrust:.1f}N tgt_err={tgt_err:.1f}m mode={mode}")
+            out_ptch = self.telemetry['lqi_diag'].get('OUT_ptch', float('nan'))
+            out_roll = self.telemetry['lqi_diag'].get('OUT_roll', float('nan'))
+            m_pitch  = self.telemetry['lqi_diag'].get('LQI_M_pitch', float('nan'))
+            print(f"  [step {self.current_step:4d}] alt={-pos[2]:.1f}m spd_h={speed_h:.1f}m/s spd={speed_3d:.1f}m/s tilt={tilt_deg:.1f}° thrust={lqi_thrust:.1f}N tgt_err={tgt_err:.1f}m mode={mode} out_ptch={out_ptch:.3f} out_roll={out_roll:.3f} M_pitch={m_pitch:.3f}")
 
         # Wait for control period (20Hz = 50ms)
         time.sleep(0.05 / self.time_scale)
@@ -552,8 +563,8 @@ class ArduPilotMode99Env(gym.Env):
                 print(f"💥 CRASH! step={self.current_step} reward={self.episode_reward:.1f}")
             elif self.telemetry['position'][2] > -5.0:
                 print(f"🌍 GROUND! step={self.current_step} reward={self.episode_reward:.1f}")
-            elif tilt_at_end > np.radians(60.0):
-                print(f"↗️ FLIP! step={self.current_step} reward={self.episode_reward:.1f} tilt={np.degrees(tilt_at_end):.1f}°")
+            elif tilt_at_end > np.radians(40.0):
+                print(f"↗️ HIGH TILT (continued) step={self.current_step} reward={self.episode_reward:.1f} tilt={np.degrees(tilt_at_end):.1f}°")
             elif not self.telemetry['armed']:
                 print(f"⚠️ DISARMED! step={self.current_step} reward={self.episode_reward:.1f}")
             else:
@@ -597,96 +608,60 @@ class ArduPilotMode99Env(gym.Env):
 
     def calculate_reward(self, obs: np.ndarray, action: np.ndarray) -> float:
         """
-        Calculate reward for current step
+        Calculate reward for current step.
 
-        Components:
-            1. Distance to goal (dense reward)
-            2. Goal reached bonus
-            3. Obstacle penalty
-            4. Crash penalty
-            5. Energy penalty
-            6. Smoothness penalty
-            7. Tilt penalty (>10deg)
+        Responsibility split:
+          RPi (this reward):  goal reaching, obstacle avoidance, altitude maintenance, stable flight
+          Mode 99 (LQR):      attitude stability, tilt control, speed regulation — NOT rewarded here
+
+        Phase 0 curriculum — teach goal-directed flight:
+            1. Goal-directed travel     +10 * dist_toward_goal_per_step → reward vel_toward_goal action
+            2. Goal reached bonus       +1000 on arrival
+            3. Progress bonus           reward approaching goal each step
+            4. Obstacle/crash penalty   safety constraints
+            5. Altitude maintenance     keep near takeoff altitude
         """
         reward = 0.0
 
-        # 1. Distance to goal (dense reward)
+        velocity = obs[3:6]
         goal_relative = obs[-3:]
         goal_dist = np.linalg.norm(goal_relative)
-        reward += -goal_dist * 0.1
+        obstacles = obs[15:21]
 
-        # 2. Goal reached bonus
+        # 1. Goal-directed travel bonus: reward moving TOWARD the goal (not any direction)
+        #    vel_toward_goal = velocity · goal_dir (positive = toward goal)
+        #    dist_toward_goal = vel_toward_goal * dt (meters closed per step)
+        #    × 10 coefficient → at 1.5 m/s toward goal: +0.75/step
+        #    Lateral / backward movement earns nothing → PPO learns to maximise vel_toward_goal
+        if goal_dist > 1e-6:
+            goal_dir_h = goal_relative[:2] / (np.linalg.norm(goal_relative[:2]) + 1e-6)
+            vel_toward_goal = velocity[0] * goal_dir_h[0] + velocity[1] * goal_dir_h[1]
+            dist_toward_goal = vel_toward_goal * 0.05  # positive = closing, negative = retreating
+            reward += 10.0 * dist_toward_goal  # toward goal → bonus, away from goal → penalty
+
+        # 3. Goal reached bonus
         if goal_dist < self.goal_radius:
             reward += 1000.0
 
-        # 3. Obstacle penalty (exponential decay)
-        obstacles = obs[15:21]  # Extract obstacle distances
-        for obstacle_dist in obstacles:
-            if obstacle_dist < 5.0:
-                reward -= 2.0 * np.exp(-obstacle_dist)
+        # 4. Progress bonus (approaching goal each step)
+        if self.prev_goal_dist is not None:
+            dist_improvement = self.prev_goal_dist - goal_dist
+            reward += 2.0 * dist_improvement
 
-        # 4. Crash detection (any obstacle < 1m)
+        # 5. Obstacle proximity penalty
+        for d in obstacles:
+            if d < 5.0:
+                reward -= 2.0 * np.exp(-d)
+
+        # 6. Crash penalty
         if np.any(obstacles < 1.0):
             reward -= 500.0
 
-        # 5. Energy penalty (velocity magnitude)
-        velocity = obs[3:6]
-        reward -= 0.01 * np.linalg.norm(velocity)
-
-        # 6. Smoothness penalty (action changes)
-        delta_action = action - self.prev_action
-        reward -= 0.05 * np.linalg.norm(delta_action)
-
-        # 7. Tilt penalty (encourage level flight to maintain altitude)
-        # obs[6:9] = [roll, pitch, yaw]
-        roll = obs[6]
-        pitch = obs[7]
-        tilt = np.sqrt(roll**2 + pitch**2)  # combined tilt angle (rad)
-        max_tilt = 0.174  # ~10 degrees in radians
-        if tilt > max_tilt:
-            reward -= 8.0 * (tilt - max_tilt)
-        # Hard penalty for extreme tilt (> 60°): approaching flip
-        if tilt > np.radians(60.0):
-            reward -= 200.0
-
-        # 7b. Danger zone penalty: tilt × speed product (FLIP precursor signal).
-        # High tilt while moving fast is the leading indicator of FLIP.
-        # penalty = k * tilt(rad) * horiz_speed(m/s)
-        # Safe  (8°,  1.5m/s): -0.6/step  → acceptable
-        # Warn  (20°, 4.0m/s): -4.2/step  → noticeable
-        # Danger(40°, 6.0m/s): -12.6/step → strong signal
-        horiz_speed = np.sqrt(velocity[0]**2 + velocity[1]**2)
-        reward -= 3.0 * tilt * horiz_speed
-
-        # 8. Altitude maintenance (penalty for error + bonus for being close)
-        current_alt = -obs[2]  # NED z → altitude (positive = up)
-        target_alt = -self._mode99_ref[2]
+        # 7. Altitude maintenance
+        current_alt = -obs[2]
+        target_alt  = -self._mode99_ref[2]
         alt_error = abs(current_alt - target_alt)
         reward -= 0.5 * alt_error
-        if alt_error < 3.0:
-            reward += 0.1
-
-        # 9. Attitude stability bonus (level flight reward)
-        if tilt < 0.1:  # ~6° 以内
-            reward += 0.5
-
-        # 10. Progress bonus (approaching goal)
-        if self.prev_goal_dist is not None:
-            dist_improvement = self.prev_goal_dist - goal_dist
-            if dist_improvement > 0:
-                reward += 1.0 * dist_improvement
-
-        # 11. Velocity toward goal bonus (capped at 5m/s to avoid encouraging overspeeding)
-        velocity = obs[3:6]
-        if goal_dist > 1e-6:
-            goal_dir = goal_relative / goal_dist
-            vel_toward_goal = np.dot(velocity, goal_dir)
-            if vel_toward_goal > 0:
-                reward += 0.3 * min(vel_toward_goal, 5.0)
-
-        # 12. Speed penalty (horiz_speed > 5m/s increases FLIP risk significantly)
-        if horiz_speed > 5.0:
-            reward -= 0.5 * (horiz_speed - 5.0) ** 2
 
         return reward
 
@@ -705,10 +680,10 @@ class ArduPilotMode99Env(gym.Env):
         if self.telemetry['position'][2] > -5.0:
             return True
 
-        # Excessive tilt (> 45°): drone entering flip / unrecoverable state
+        # Excessive tilt (> 40°): unstable, end episode
         att = self.telemetry['attitude']
         tilt = np.sqrt(att[0]**2 + att[1]**2)
-        if tilt > np.radians(60.0):
+        if tilt > np.radians(40.0):
             return True
 
         # Disarmed unexpectedly
@@ -838,8 +813,12 @@ class ArduPilotMode99Env(gym.Env):
 
             elif msg_type == 'NAMED_VALUE_FLOAT':
                 name = msg.name.rstrip('\x00')
-                if name in ('LQI_Thrust', 'EKF_pD', 'REF_pD', 'ERR_pD', 'ERR_vD', 'THR_out'):
-                    self.telemetry['lqi_diag'][name] = msg.value
+                self.telemetry['lqi_diag'][name] = msg.value
+
+            elif msg_type == 'STATUSTEXT':
+                text = msg.text.rstrip('\x00')
+                if text.startswith('M99 ') or text.startswith('SMARTPHOTO99'):
+                    print(f"    [SITL] {text}")
 
     def send_position_target(
         self,
