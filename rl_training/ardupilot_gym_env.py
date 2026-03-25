@@ -68,8 +68,8 @@ class ArduPilotMode99Env(gym.Env):
         self,
         sitl_connection: str = 'tcp:127.0.0.1:5760',
         mission_type: str = 'obstacle_avoidance',
-        max_steps: int = 1000,
-        goal_radius: float = 5.0,
+        max_steps: int = 1500,
+        goal_radius: float = 8.0,
         time_scale: float = 1.0,
         enable_obstacles: bool = True,
         goal_dist_min: float = 5.0,
@@ -115,7 +115,7 @@ class ArduPilotMode99Env(gym.Env):
         # action[2] = vel_D: [-MAX_VEL_D, MAX_VEL_D] — vertical (NED: + = descend)
         # action[3] = yaw_rate: [-0.3, 0.3] rad/s
         # Converted to NED frame in step() before sending to Mode 99
-        MAX_VEL = 1.5    # m/s horizontal — restored now that random policy is always goal-directed
+        MAX_VEL = 2.0    # m/s horizontal — increased from 1.5 after TILT=0 confirmed with mass-unified SITL
         MAX_VEL_D = 0.3  # m/s vertical (conservative)
         self.action_space = spaces.Box(
             low=np.array([0.0,    -MAX_VEL, -MAX_VEL_D, -0.3]),
@@ -657,11 +657,15 @@ class ArduPilotMode99Env(gym.Env):
         if np.any(obstacles < 1.0):
             reward -= 500.0
 
-        # 7. Altitude maintenance
+        # 7. Altitude maintenance (±1m dead zone, coefficient 0.1)
         current_alt = -obs[2]
         target_alt  = -self._mode99_ref[2]
-        alt_error = abs(current_alt - target_alt)
-        reward -= 0.5 * alt_error
+        alt_error = max(0.0, abs(current_alt - target_alt) - 1.0)
+        reward -= 0.1 * alt_error
+
+        # 8. Time penalty: discourage hovering in place
+        #    -0.1/step × 1500steps = -150 < crash penalty -500 (correct hierarchy)
+        reward -= 0.1
 
         return reward
 

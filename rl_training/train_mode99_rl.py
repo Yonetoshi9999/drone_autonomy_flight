@@ -57,8 +57,8 @@ def make_env(rank: int, seed: int = 0, mission_type: str = 'obstacle_avoidance',
         env = ArduPilotMode99Env(
             sitl_connection=f'tcp:127.0.0.1:{5760 + rank}',
             mission_type=mission_type,
-            max_steps=1000,
-            goal_radius=5.0,
+            max_steps=1500,
+            goal_radius=8.0,
             time_scale=5.0,  # Speed up simulation 5x
             enable_obstacles=enable_obstacles,
             goal_dist_min=goal_dist_min,

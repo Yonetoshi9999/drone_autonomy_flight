@@ -1,29 +1,8 @@
-# Medium quadcopter — synchronized with sysid_params.txt (Mode 99 LQR design values)
-# This file is loaded by SITL via --model +:path/to/quad_2kg.json
-# All values match the LQR state-space model to eliminate parameter mismatch.
-#
-# sysid_params.txt reference:
-#   MASS=2.0, IXX=0.0347, IYY=0.0458, IZZ=0.0977
-#   ARM_LENGTH=0.225, MAX_THRUST=8.0 N/motor, THROTTLE_HOVER=0.5
-
 {
-    # Total vehicle mass in kg — matches sysid_params.txt MASS=2.0
     "mass" : 2.0,
-
-    # Motor-to-motor diagonal distance (m)
-    # ARM_LENGTH=0.225m → diagonal = 2 × 0.225 = 0.45m (X-frame, opposite motor distance)
     "diagonal_size" : 0.45,
-
-    # Moment of inertia [Ixx, Iyy, Izz] in kg⋅m²
-    # Matches sysid_params.txt: IXX=0.0347, IYY=0.0458, IZZ=0.0977
-    # Overrides the default estimation from mass × diagonal_size
     "moment_inertia" : [0.0347, 0.0458, 0.0977],
-
-    # Hover throttle — matches sysid_params.txt THROTTLE_HOVER=0.5
     "hoverThrOut" : 0.5,
-
-    # Reference flight parameters for drag estimation
-    # (moderate speed flight, standard atmosphere)
     "refSpd"    : 10.0,
     "refAngle"  : 15.0,
     "refVoltage": 22.2,
@@ -31,31 +10,16 @@
     "refAlt"    : 0,
     "refTempC"  : 25,
     "refBatRes" : 0.02,
-
-    # Battery
     "maxVoltage"     : 25.2,
     "battCapacityAh" : 0,
-
-    # Propeller thrust curve (MOT_THST_EXPO)
     "propExpo" : 0.65,
-
-    # Maximum yaw rate (deg/s)
     "refRotRate" : 300,
-
-    # PWM limits — match params.parm
     "pwmMin"   : 1000,
     "pwmMax"   : 2000,
     "spin_min" : 0.10,
     "spin_max" : 0.95,
     "slew_max" : 0,
-
-    # Disc area for 4× 10-inch props (≈ π × 0.127² × 4 ≈ 0.203 m²)
-    # ARM_LENGTH=0.225 → ~10" props typical for this frame size
     "disc_area" : 0.203,
-
-    # Momentum drag coefficient
     "mdrag_coef" : 0.10,
-
-    # Quadrotor (X configuration)
     "num_motors" : 4
 }
