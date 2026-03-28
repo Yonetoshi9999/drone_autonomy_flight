@@ -38,7 +38,8 @@ class GoalStatsCallback(BaseCallback):
 
 
 def make_env(rank: int, seed: int = 0, mission_type: str = 'obstacle_avoidance',
-             enable_obstacles: bool = True, goal_dist_min: float = 5.0, goal_dist_max: float = 15.0):
+             enable_obstacles: bool = True, goal_dist_min: float = 5.0, goal_dist_max: float = 15.0,
+             goal_radius: float = 3.0, max_steps: int = 1500):
     """
     Create a single environment
 
@@ -57,8 +58,8 @@ def make_env(rank: int, seed: int = 0, mission_type: str = 'obstacle_avoidance',
         env = ArduPilotMode99Env(
             sitl_connection=f'tcp:127.0.0.1:{5760 + rank}',
             mission_type=mission_type,
-            max_steps=1500,
-            goal_radius=8.0,
+            max_steps=max_steps,
+            goal_radius=goal_radius,
             time_scale=5.0,  # Speed up simulation 5x
             enable_obstacles=enable_obstacles,
             goal_dist_min=goal_dist_min,
@@ -80,7 +81,10 @@ def train_ppo(
     resume_path: str = None,
     enable_obstacles: bool = True,
     goal_dist_min: float = 5.0,
-    goal_dist_max: float = 15.0
+    goal_dist_max: float = 15.0,
+    goal_radius: float = 3.0,
+    ent_coef: float = 0.05,
+    max_steps: int = 1500
 ):
     """
     Train PPO agent against ArduPilot SITL + Mode 99 LQR.
@@ -124,7 +128,8 @@ def train_ppo(
 
     # Single training environment (n_envs=1 enforced above)
     env = DummyVecEnv([make_env(0, mission_type=mission_type, enable_obstacles=enable_obstacles,
-                                goal_dist_min=goal_dist_min, goal_dist_max=goal_dist_max)])
+                                goal_dist_min=goal_dist_min, goal_dist_max=goal_dist_max,
+                                goal_radius=goal_radius, max_steps=max_steps)])
     # Normalize rewards to stabilize value function learning.
     # norm_obs=False: observations have meaningful physical units; don't scale them.
     # clip_reward=10: cap normalized reward to prevent outliers from destabilizing training.
@@ -167,7 +172,7 @@ def train_ppo(
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,
+            ent_coef=ent_coef,
             vf_coef=0.5,
             max_grad_norm=0.5,
             verbose=1,
@@ -303,6 +308,12 @@ if __name__ == '__main__':
                         help='Minimum goal distance in meters (default: 5.0)')
     parser.add_argument('--goal-max', type=float, default=15.0,
                         help='Maximum goal distance in meters (default: 15.0)')
+    parser.add_argument('--goal-radius', type=float, default=3.0,
+                        help='Goal arrival radius in meters (default: 3.0)')
+    parser.add_argument('--ent-coef', type=float, default=0.05,
+                        help='Entropy coefficient for exploration (default: 0.05)')
+    parser.add_argument('--max-steps', type=int, default=1500,
+                        help='Max steps per episode (default: 1500)')
 
     args = parser.parse_args()
 
@@ -314,7 +325,10 @@ if __name__ == '__main__':
             resume_path=args.resume,
             enable_obstacles=not args.no_obstacles,
             goal_dist_min=args.goal_min,
-            goal_dist_max=args.goal_max
+            goal_dist_max=args.goal_max,
+            goal_radius=args.goal_radius,
+            ent_coef=args.ent_coef,
+            max_steps=args.max_steps
         )
     else:  # test
         if args.model_path is None:

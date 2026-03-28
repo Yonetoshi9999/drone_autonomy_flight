@@ -31,6 +31,9 @@ NO_REBUILD=""
 NO_OBSTACLES=""
 GOAL_MIN=""
 GOAL_MAX=""
+GOAL_RADIUS=""
+ENT_COEF=""
+MAX_STEPS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -43,6 +46,9 @@ while [[ $# -gt 0 ]]; do
         --no-obstacles)  NO_OBSTACLES="--no-obstacles"; shift ;;
         --goal-min)      GOAL_MIN="--goal-min $2";  shift 2 ;;
         --goal-max)      GOAL_MAX="--goal-max $2";  shift 2 ;;
+        --goal-radius)   GOAL_RADIUS="--goal-radius $2"; shift 2 ;;
+        --ent-coef)      ENT_COEF="--ent-coef $2";  shift 2 ;;
+        --max-steps)     MAX_STEPS="--max-steps $2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -193,4 +199,7 @@ python3 -u train_mode99_rl.py \
     $RESUME_ARG \
     $NO_OBSTACLES \
     $GOAL_MIN \
-    $GOAL_MAX
+    $GOAL_MAX \
+    $GOAL_RADIUS \
+    $ENT_COEF \
+    $MAX_STEPS

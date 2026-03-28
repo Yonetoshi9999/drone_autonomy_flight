@@ -99,27 +99,34 @@ class ArduPilotMode99Env(gym.Env):
         self.goal_dist_min = goal_dist_min
         self.goal_dist_max = goal_dist_max
 
-        # State space: 26D continuous
-        # pos(3) + vel(3) + att(3) + rates(3) + battery(1) + gps(4) + obstacles(6) + goal_rel(3)
+        # State space: 23D continuous
+        # vel(3) + att(3) + rates(3) + battery(1) + gps(4) + obstacles(6) + goal_rel(3)
+        # NOTE: absolute position removed — it accumulates unboundedly across episodes
+        # and confuses the policy. goal_rel(3) is sufficient for direction.
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(26,),
+            shape=(23,),
             dtype=np.float32
         )
 
         # Action space: 4D continuous — goal-relative coordinate frame
-        # action[0] = vel_toward_goal: [0, MAX_VEL] — always positive, always toward goal
-        #             → even a random policy drives toward goal → eliminates random speed buildup
-        # action[1] = vel_lateral: [-MAX_VEL, MAX_VEL] — perpendicular to goal dir (obstacle avoidance)
+        # action[0] = vel_toward_goal: [MIN_VEL_FWD, MAX_VEL]
+        #             Lower bound = 1.5 m/s: drone ALWAYS moves toward goal (no hovering).
+        #             SB3 PPO initializes with NN output≈0 → maps to midpoint ≈ 2.75 m/s.
+        #             Guarantees goal-directed flight from step 1.
+        # action[1] = vel_lateral: [-MAX_VEL_LAT, MAX_VEL_LAT] — perpendicular to goal dir
+        #             Reduced to ±1.0 m/s to prevent lateral drift from dominating
         # action[2] = vel_D: [-MAX_VEL_D, MAX_VEL_D] — vertical (NED: + = descend)
         # action[3] = yaw_rate: [-0.3, 0.3] rad/s
         # Converted to NED frame in step() before sending to Mode 99
-        MAX_VEL = 2.0    # m/s horizontal — increased from 1.5 after TILT=0 confirmed with mass-unified SITL
-        MAX_VEL_D = 0.3  # m/s vertical (conservative)
+        MAX_VEL = 4.0       # m/s horizontal max
+        MIN_VEL_FWD = 1.5   # m/s min toward-goal speed (lower bound prevents hovering)
+        MAX_VEL_LAT = 1.0   # m/s lateral max (reduced to prevent lateral drift)
+        MAX_VEL_D = 0.3     # m/s vertical (conservative)
         self.action_space = spaces.Box(
-            low=np.array([0.0,    -MAX_VEL, -MAX_VEL_D, -0.3]),
-            high=np.array([MAX_VEL, MAX_VEL,  MAX_VEL_D,  0.3]),
+            low=np.array([MIN_VEL_FWD, -MAX_VEL_LAT, -MAX_VEL_D, -0.3]),
+            high=np.array([MAX_VEL,     MAX_VEL_LAT,  MAX_VEL_D,  0.3]),
             shape=(4,),
             dtype=np.float32
         )
@@ -413,19 +420,16 @@ class ArduPilotMode99Env(gym.Env):
         # between episodes during LAND mode.
         origin_ne = self._mode99_ref[:2]
         origin_d = self._mode99_ref[2]  # drone's altitude in NED (e.g. -43m)
-        half = self.goal_dist_max / 2.0
-        if self.mission_type == 'obstacle_avoidance':
-            self.goal_position = np.array([
-                origin_ne[0] + self.np_random.uniform(self.goal_dist_min, self.goal_dist_max),
-                origin_ne[1] + self.np_random.uniform(-half, half),
-                origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
-            ], dtype=np.float32)
-        else:  # waypoint_navigation
-            self.goal_position = np.array([
-                origin_ne[0] + self.np_random.uniform(-half, half),
-                origin_ne[1] + self.np_random.uniform(-half, half),
-                origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
-            ], dtype=np.float32)
+        # Place goal at a random direction and random distance from the drone.
+        # Previously goal was always placed in +N direction → directional bias
+        # and large goal distances when drone drifted in E/W direction.
+        angle = self.np_random.uniform(0, 2 * np.pi)
+        dist  = self.np_random.uniform(self.goal_dist_min, self.goal_dist_max)
+        self.goal_position = np.array([
+            origin_ne[0] + dist * np.cos(angle),
+            origin_ne[1] + dist * np.sin(angle),
+            origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
+        ], dtype=np.float32)
         self._obstacles = []
         if self.enable_obstacles:
             num_obstacles = self.np_random.integers(3, 9)
@@ -485,8 +489,8 @@ class ArduPilotMode99Env(gym.Env):
         ], dtype=np.float32)
 
         # Safety cap: prevent diagonal combination from exceeding MAX_VEL_H.
-        # e.g. toward=1.5 + lateral=1.5 would give 2.12 m/s if not clipped.
-        MAX_VEL_H = 1.5
+        # e.g. toward=4.0 + lateral=4.0 would give 5.66 m/s if not clipped.
+        MAX_VEL_H = 4.0
         h_mag = np.sqrt(vel_cmd[0]**2 + vel_cmd[1]**2)
         if h_mag > MAX_VEL_H:
             scale = MAX_VEL_H / h_mag
@@ -510,6 +514,10 @@ class ArduPilotMode99Env(gym.Env):
             velocity=vel_ref,
             yaw_rate=action[3]
         )
+
+        # Debug: print action and vel_cmd for first 5 steps and every 50 steps
+        if self.current_step <= 5 or self.current_step % 50 == 0:
+            print(f"  [dbg step{self.current_step:3d}] act=[{action[0]:.2f},{action[1]:.2f},{action[2]:.2f},{action[3]:.2f}] vel_cmd=[{vel_cmd[0]:.2f},{vel_cmd[1]:.2f},{vel_cmd[2]:.2f}] goal_dir=[{goal_dir[0]:.2f},{goal_dir[1]:.2f}]")
 
         # Log altitude every 100 steps to track trajectory
         if self.current_step % 100 == 0:
@@ -594,14 +602,13 @@ class ArduPilotMode99Env(gym.Env):
 
         # Construct observation
         obs = np.concatenate([
-            self.telemetry['position'],      # 3
-            self.telemetry['velocity'],      # 3
-            self.telemetry['attitude'],      # 3
-            self.telemetry['rates'],         # 3
-            [self.telemetry['battery']],     # 1
-            self.telemetry['gps'],           # 4
-            self.telemetry['obstacles'],     # 6
-            goal_relative                     # 3
+            self.telemetry['velocity'],      # 3  [0:3]
+            self.telemetry['attitude'],      # 3  [3:6]
+            self.telemetry['rates'],         # 3  [6:9]
+            [self.telemetry['battery']],     # 1  [9]
+            self.telemetry['gps'],           # 4  [10:14]
+            self.telemetry['obstacles'],     # 6  [14:20]
+            goal_relative                     # 3  [20:23]
         ])
 
         return obs.astype(np.float32)
@@ -623,21 +630,22 @@ class ArduPilotMode99Env(gym.Env):
         """
         reward = 0.0
 
-        velocity = obs[3:6]
+        velocity = obs[0:3]
         goal_relative = obs[-3:]
         goal_dist = np.linalg.norm(goal_relative)
-        obstacles = obs[15:21]
+        obstacles = obs[14:20]
 
         # 1. Goal-directed travel bonus: reward moving TOWARD the goal (not any direction)
-        #    vel_toward_goal = velocity · goal_dir (positive = toward goal)
+        #    vel_toward_goal = velocity · goal_dir (positive = toward goal, negative = away)
         #    dist_toward_goal = vel_toward_goal * dt (meters closed per step)
         #    × 10 coefficient → at 1.5 m/s toward goal: +0.75/step
-        #    Lateral / backward movement earns nothing → PPO learns to maximise vel_toward_goal
+        #    Stored in vel_toward_goal for use in speed bonus (#8) below.
+        vel_toward_goal = 0.0
         if goal_dist > 1e-6:
             goal_dir_h = goal_relative[:2] / (np.linalg.norm(goal_relative[:2]) + 1e-6)
             vel_toward_goal = velocity[0] * goal_dir_h[0] + velocity[1] * goal_dir_h[1]
             dist_toward_goal = vel_toward_goal * 0.05  # positive = closing, negative = retreating
-            reward += 10.0 * dist_toward_goal  # toward goal → bonus, away from goal → penalty
+            reward += 10.0 * max(0.0, dist_toward_goal)  # toward goal → bonus, away from goal → no penalty
 
         # 3. Goal reached bonus
         if goal_dist < self.goal_radius:
@@ -646,7 +654,7 @@ class ArduPilotMode99Env(gym.Env):
         # 4. Progress bonus (approaching goal each step)
         if self.prev_goal_dist is not None:
             dist_improvement = self.prev_goal_dist - goal_dist
-            reward += 2.0 * dist_improvement
+            reward += 2.0 * max(0.0, dist_improvement)  # approaching goal → bonus, retreating → no penalty
 
         # 5. Obstacle proximity penalty
         for d in obstacles:
@@ -658,14 +666,38 @@ class ArduPilotMode99Env(gym.Env):
             reward -= 500.0
 
         # 7. Altitude maintenance (±1m dead zone, coefficient 0.1)
-        current_alt = -obs[2]
+        current_alt = -self.telemetry['position'][2]
         target_alt  = -self._mode99_ref[2]
         alt_error = max(0.0, abs(current_alt - target_alt) - 1.0)
         reward -= 0.1 * alt_error
 
-        # 8. Time penalty: discourage hovering in place
-        #    -0.1/step × 1500steps = -150 < crash penalty -500 (correct hierarchy)
-        reward -= 0.1
+        # 8. Directional speed bonus based on actual velocity toward goal
+        #    action[0] now has lower bound 1.5 m/s so the drone always moves toward goal.
+        #    This reward still encourages going faster.
+        reward += 0.3 * max(0.0, vel_toward_goal)
+
+        # 9. Time penalty: discourage hovering in place
+        #    -1.0/step × 1500steps = -1500 → strong incentive for high-speed goal approach
+        reward -= 1.0
+
+        # 10. Distance penalty: penalize being far from goal each step
+        #     -0.05 × goal_dist/step → at 10m: -0.5/step, at 5m: -0.25/step
+        #     Makes hovering far from goal very costly; incentivizes closing distance quickly
+        reward -= 0.05 * goal_dist
+
+        # 11. Hovering penalty: discourage stationary flight
+        #     -1.0 × max(0, 1.0 - spd_h) → at 0 m/s: -1.0/step, at 1 m/s: 0/step
+        #     Combined with time+dist penalty: hovering = -2.55/step, 2 m/s toward goal = +0.3/step
+        spd_h = np.sqrt(velocity[0]**2 + velocity[1]**2)
+        reward -= 1.0 * max(0.0, 1.0 - spd_h)
+
+        # 12. Early arrival bonus: reward reaching goal faster
+        #     +500 × (1 - step/max_steps) → at step 300: +400, at step 1200: +100
+        #     Rewards high-speed goal approach vs slow crawl
+        if goal_dist < self.goal_radius:
+            early_bonus = 500.0 * (1.0 - self.current_step / self.max_steps)
+            reward += early_bonus
+
 
         return reward
 
