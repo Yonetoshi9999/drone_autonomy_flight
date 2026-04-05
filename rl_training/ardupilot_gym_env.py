@@ -14,6 +14,8 @@ from gymnasium import spaces
 import numpy as np
 from pymavlink import mavutil
 import time
+import os
+import subprocess
 from typing import Tuple, Dict, Any, Optional
 
 
@@ -121,12 +123,13 @@ class ArduPilotMode99Env(gym.Env):
         # action[3] = yaw_rate: [-0.3, 0.3] rad/s
         # Converted to NED frame in step() before sending to Mode 99
         MAX_VEL = 4.0       # m/s horizontal max
-        MIN_VEL_FWD = 1.5   # m/s min toward-goal speed (lower bound prevents hovering)
+        MIN_VEL_FWD = 1.5   # m/s min toward-goal speed when outside goal (prevents hovering far away)
         MAX_VEL_LAT = 1.0   # m/s lateral max (reduced to prevent lateral drift)
         MAX_VEL_D = 0.3     # m/s vertical (conservative)
+        self.min_vel_fwd = MIN_VEL_FWD
         self.action_space = spaces.Box(
-            low=np.array([MIN_VEL_FWD, -MAX_VEL_LAT, -MAX_VEL_D, -0.3]),
-            high=np.array([MAX_VEL,     MAX_VEL_LAT,  MAX_VEL_D,  0.3]),
+            low=np.array([0.0,      -MAX_VEL_LAT, -MAX_VEL_D, -0.3]),
+            high=np.array([MAX_VEL,  MAX_VEL_LAT,  MAX_VEL_D,  0.3]),
             shape=(4,),
             dtype=np.float32
         )
@@ -139,6 +142,8 @@ class ArduPilotMode99Env(gym.Env):
         self.current_step = 0
         self.prev_action = np.zeros(4)
         self.prev_goal_dist = None
+        self.initial_goal_dist = 0.0
+        self._approached_goal = False  # True once drone enters goal_radius*2 zone
         self.goal_position = np.zeros(3)
         self.start_position = np.zeros(3)
         self.episode_reward = 0.0
@@ -163,6 +168,72 @@ class ArduPilotMode99Env(gym.Env):
 
         # Virtual obstacles for this episode: list of (center, half_size) in NED (meters)
         self._obstacles: list = []
+
+    def _restart_sitl(self):
+        """Kill and restart SITL process to reset position drift."""
+        pid_file = '/tmp/sitl_mode99.pid'
+        sitl_cmd_file = '/tmp/sitl_mode99_cmd.sh'
+
+        # Kill existing arducopter (pkill covers orphan processes too)
+        if os.path.exists(pid_file):
+            with open(pid_file) as f:
+                pid = f.read().strip()
+            try:
+                subprocess.run(['kill', pid], check=False)
+            except Exception:
+                pass
+        subprocess.run(['pkill', '-f', 'arducopter'], check=False)
+        # Fixed wait — do NOT use socket check (SITL TCP accepts only 1 connection)
+        time.sleep(8.0)
+
+        # Restart SITL — cmd file has "cd $ARDUPILOT_DIR &&" so physical model loads correctly
+        if not os.path.exists(sitl_cmd_file):
+            print(f"  ⚠️  SITL cmd file not found: {sitl_cmd_file} — skipping restart")
+            return
+        sitl_proc = subprocess.Popen(['bash', sitl_cmd_file],
+                                     stdout=open('/tmp/sitl_mode99.log', 'w'),
+                                     stderr=subprocess.STDOUT)
+        with open(pid_file, 'w') as f:
+            f.write(str(sitl_proc.pid))
+        print(f"  ✅ SITL restarted (PID: {sitl_proc.pid})")
+
+        # Fixed wait for SITL to initialize
+        time.sleep(15.0)
+
+        # Reconnect MAVLink with retry
+        if self.mav:
+            try:
+                self.mav.close()
+            except Exception:
+                pass
+        for attempt in range(15):
+            try:
+                self.connect()
+                print(f"  ✅ MAVLink reconnected after SITL restart")
+                break
+            except Exception as e:
+                print(f"  ⚠️  MAVLink connect attempt {attempt+1}/15 failed: {e}")
+                time.sleep(3.0)
+        else:
+            raise RuntimeError("Failed to reconnect MAVLink after SITL restart")
+
+        # Wait for fresh LOCAL_POSITION_NED from restarted SITL and update telemetry.
+        # Retry stream requests every 3s because SITL may not process them immediately.
+        deadline = time.time() + 30.0
+        last_request = 0.0
+        while time.time() < deadline:
+            # Re-request streams periodically until messages arrive
+            if time.time() - last_request > 3.0:
+                self.request_data_streams()
+                last_request = time.time()
+            msg = self.mav.recv_match(type='LOCAL_POSITION_NED', blocking=True, timeout=1.0)
+            if msg:
+                self.telemetry['position'] = np.array([msg.x, msg.y, msg.z])
+                self.telemetry['velocity'] = np.array([msg.vx, msg.vy, msg.vz])
+                print(f"  ✅ Telemetry refreshed: pos=({msg.x:.1f}, {msg.y:.1f}, {msg.z:.1f})")
+                break
+        else:
+            print("  ⚠️  Telemetry refresh timeout — position may be stale")
 
     def connect(self):
         """Connect to ArduPilot SITL via MAVLink"""
@@ -232,11 +303,20 @@ class ArduPilotMode99Env(gym.Env):
         """
         super().reset(seed=seed)
 
+        # Drift check: restart SITL if position drifted > 300m from origin
+        DRIFT_LIMIT = 2000.0
+        pos = self.telemetry['position']
+        drift = np.sqrt(pos[0]**2 + pos[1]**2)
+        if drift > DRIFT_LIMIT:
+            print(f"  ⚠️  SITL drift detected: {drift:.0f}m from origin — restarting SITL...")
+            self._restart_sitl()
+
         # Reset episode counters
         self.current_step = 0
         self.episode_reward = 0.0
         self.prev_action = np.zeros(4)
         self.prev_goal_dist = None
+        self._approached_goal = False
         self._target_pos = np.zeros(3)  # reset; will be set after M99_REF capture
 
         # Goal and obstacles are placed after M99_REF capture below,
@@ -293,6 +373,18 @@ class ArduPilotMode99Env(gym.Env):
         if not ekf_ok:
             print("  WARNING: EKF not validated, proceeding anyway")
 
+        # Step 3b: Reset HOME to current GPS position so LOCAL_POSITION_NED starts
+        # at (0,0,0) after SITL restart. Must be done after GPS lock is confirmed.
+        self.mav.mav.command_long_send(
+            self.mav.target_system,
+            self.mav.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_HOME,
+            0,   # confirmation
+            1,   # use_current=1 → set home to current GPS position
+            0, 0, 0, 0, 0, 0
+        )
+        time.sleep(1.0)  # wait for home to be applied
+
         # Step 4: Arm (force arm, magic 2989)
         self.arm()
         time.sleep(0.1)
@@ -333,6 +425,11 @@ class ArduPilotMode99Env(gym.Env):
             time.sleep(0.05 / self.time_scale)
         else:
             print(f"  GUIDED stabilization timeout (horiz={horiz_speed:.1f}m/s alt={-pos[2]:.1f}m)")
+            # If drone is moving too fast to stabilize, restart SITL and retry reset
+            if horiz_speed > 3.0:
+                print(f"  ⚠️  Speed too high ({horiz_speed:.1f}m/s) — restarting SITL and retrying")
+                self._restart_sitl()
+                return self.reset(seed=seed, options=options)
 
         # Step 6: Switch to Mode 99
         self.mav.mav.set_mode_send(
@@ -430,6 +527,7 @@ class ArduPilotMode99Env(gym.Env):
             origin_ne[1] + dist * np.sin(angle),
             origin_d + self.np_random.uniform(-5, 5)  # same altitude ±5m
         ], dtype=np.float32)
+        self.initial_goal_dist = float(dist)  # 2D distance to goal at episode start
         self._obstacles = []
         if self.enable_obstacles:
             num_obstacles = self.np_random.integers(3, 9)
@@ -463,6 +561,12 @@ class ArduPilotMode99Env(gym.Env):
 
         # Clip action to valid range
         action = np.clip(action, self.action_space.low, self.action_space.high)
+
+        # Outside goal radius: enforce minimum forward speed to prevent hovering
+        # Inside goal radius: allow deceleration to 0 so agent can learn to stop
+        goal_dist_now = np.linalg.norm(self.goal_position - self.telemetry['position'])
+        if goal_dist_now > self.goal_radius:
+            action[0] = max(action[0], self.min_vel_fwd)
 
         # --- Goal-relative → NED coordinate conversion ---
         # action[0] = vel_toward_goal: speed in the direction of the goal (always ≥ 0)
@@ -532,7 +636,7 @@ class ArduPilotMode99Env(gym.Env):
             tgt_err = np.linalg.norm(self._target_pos - pos)
             out_ptch = self.telemetry['lqi_diag'].get('OUT_ptch', float('nan'))
             out_roll = self.telemetry['lqi_diag'].get('OUT_roll', float('nan'))
-            m_pitch  = self.telemetry['lqi_diag'].get('LQI_M_pitch', float('nan'))
+            m_pitch  = self.telemetry['lqi_diag'].get('LQI_M_ptch', float('nan'))
             print(f"  [step {self.current_step:4d}] alt={-pos[2]:.1f}m spd_h={speed_h:.1f}m/s spd={speed_3d:.1f}m/s tilt={tilt_deg:.1f}° thrust={lqi_thrust:.1f}N tgt_err={tgt_err:.1f}m mode={mode} out_ptch={out_ptch:.3f} out_roll={out_roll:.3f} M_pitch={m_pitch:.3f}")
 
         # Wait for control period (20Hz = 50ms)
@@ -550,7 +654,12 @@ class ArduPilotMode99Env(gym.Env):
 
         # Check termination conditions
         terminated = self.is_terminated()
-        truncated = self.current_step >= self.max_steps
+        goal_dist_now = np.linalg.norm(self.goal_position - self.telemetry['position'])
+        if goal_dist_now < self.goal_radius * 2.0:
+            self._approached_goal = True
+        passed_goal = (self._approached_goal and
+                       goal_dist_now > self.goal_radius * 1.5)
+        truncated = self.current_step >= self.max_steps or passed_goal
 
         # Log episode end reason
         if terminated or truncated:
@@ -575,6 +684,8 @@ class ArduPilotMode99Env(gym.Env):
                 print(f"↗️ HIGH TILT (continued) step={self.current_step} reward={self.episode_reward:.1f} tilt={np.degrees(tilt_at_end):.1f}°")
             elif not self.telemetry['armed']:
                 print(f"⚠️ DISARMED! step={self.current_step} reward={self.episode_reward:.1f}")
+            elif passed_goal:
+                print(f"🏃 PASSED GOAL! step={self.current_step} reward={self.episode_reward:.1f} goal_dist={goal_dist:.1f}m (threshold={self.goal_radius * 1.5:.1f}m)")
             else:
                 print(f"⏱️ TIMEOUT! step={self.current_step} reward={self.episode_reward:.1f} goal_dist={goal_dist:.1f}m")
 
@@ -675,6 +786,15 @@ class ArduPilotMode99Env(gym.Env):
         #    action[0] now has lower bound 1.5 m/s so the drone always moves toward goal.
         #    This reward still encourages going faster.
         reward += 0.3 * max(0.0, vel_toward_goal)
+
+        # 8b. Deceleration reward near goal
+        #     Within 2× goal_radius, penalize high approach speed to prevent overshoot.
+        #     Smoothly increases as drone approaches: coefficient ramps from 0 → 1.0
+        #     e.g. goal_radius=5m, threshold=10m: at 8m dist, coef=0.2; at 5m, coef=0.5
+        decel_threshold = self.goal_radius * 1.0
+        if goal_dist < decel_threshold:
+            proximity = 1.0 - goal_dist / decel_threshold  # 0 at threshold, 1 at goal
+            reward -= 1.0 * proximity * max(0.0, vel_toward_goal - 1.0)
 
         # 9. Time penalty: discourage hovering in place
         #    -1.0/step × 1500steps = -1500 → strong incentive for high-speed goal approach

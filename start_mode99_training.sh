@@ -16,7 +16,7 @@ set -e
 ARDUPILOT_DIR="${ARDUPILOT_DIR:-$HOME/ardupilot}"
 WORKSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARAM_FILE="$WORKSPACE_DIR/configs/ardupilot/params.parm"
-FRAME_MODEL="configs/ardupilot/quad_2kg.json"
+FRAME_MODEL="Tools/autotest/models/quad_2kg.json"
 TRAINING_DIR="$WORKSPACE_DIR/rl_training"
 SITL_PORT=5760   # arducopter binary listens on 5760 directly (no MAVProxy needed)
 SITL_SPEEDUP=5
@@ -76,11 +76,30 @@ echo "  Timesteps:    $TIMESTEPS"
 echo "  ArduPilot:    $ARDUPILOT_DIR"
 echo "======================================================================"
 
+# Generate sysid_params.txt from quad_2kg.json (single source of truth for physical params)
+FRAME_MODEL_ABS="$ARDUPILOT_DIR/$FRAME_MODEL"
+mkdir -p /tmp/sitl_cowork
+python3 - "$FRAME_MODEL_ABS" /tmp/sitl_cowork/sysid_params.txt <<'PYEOF'
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    d = json.load(f)
+lines = [
+    f"MASS={d['mass']}",
+    f"IXX={d['moment_inertia'][0]}",
+    f"IYY={d['moment_inertia'][1]}",
+    f"IZZ={d['moment_inertia'][2]}",
+    f"THROTTLE_HOVER={d['hoverThrOut']}",
+]
+with open(dst, "w") as f:
+    f.write("\n".join(lines) + "\n")
+print(f"✅ sysid_params.txt generated from {src}")
+PYEOF
+
 # Copy lqr_gains.txt to SITL working directory so Mode 99 loads DARE gains instead of heuristic
 LQR_GAINS_SRC="$ARDUPILOT_DIR/ArduCopter/lqr_gains.txt"
 if [ -f "$LQR_GAINS_SRC" ]; then
     cp "$LQR_GAINS_SRC" "$WORKSPACE_DIR/lqr_gains.txt"
-    mkdir -p /tmp/sitl_cowork
     cp "$LQR_GAINS_SRC" /tmp/sitl_cowork/lqr_gains.txt
     echo "✅ lqr_gains.txt copied to SITL working directory"
 else
@@ -89,7 +108,19 @@ fi
 
 echo ""
 echo "Starting SITL (arducopter binary directly, port $SITL_PORT)..."
-"$ARDUPILOT_DIR/build/sitl/bin/arducopter" \
+
+# Save SITL command for drift-triggered restart by gym_env
+# Must cd to ARDUPILOT_DIR so that relative model path (Tools/autotest/models/...) resolves correctly
+cat > /tmp/sitl_mode99_cmd.sh << SITLEOF
+cd "$ARDUPILOT_DIR" && "$ARDUPILOT_DIR/build/sitl/bin/arducopter" \
+    --model "+:$FRAME_MODEL" \
+    --speedup "$SITL_SPEEDUP" \
+    --defaults "$ARDUPILOT_DIR/Tools/autotest/default_params/copter.parm,$PARAM_FILE" \
+    --sim-address=127.0.0.1 \
+    -I0
+SITLEOF
+
+cd "$ARDUPILOT_DIR" && "$ARDUPILOT_DIR/build/sitl/bin/arducopter" \
     --model "+:$FRAME_MODEL" \
     --speedup "$SITL_SPEEDUP" \
     --defaults "$ARDUPILOT_DIR/Tools/autotest/default_params/copter.parm,$PARAM_FILE" \
@@ -99,6 +130,7 @@ echo "Starting SITL (arducopter binary directly, port $SITL_PORT)..."
     &
 SITL_PID=$!
 echo "  SITL PID: $SITL_PID"
+echo "$SITL_PID" > /tmp/sitl_mode99.pid
 
 # Cleanup SITL on exit (Ctrl-C or normal exit)
 cleanup() {

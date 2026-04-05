@@ -26,16 +26,24 @@ Output: lqr_gains.txt  (4 rows × 18 cols, space-separated)
         Place in ~/ardupilot/ArduCopter/ or /tmp/sitl_cowork/
 """
 
+import json
 import numpy as np
 from scipy.linalg import expm, solve_discrete_are
 
 # ============================================================================
-# System parameters (from sysid_params.txt)
+# System parameters — loaded from quad_2kg.json (single source of truth)
 # ============================================================================
-m    = 2.0      # kg
-Ixx  = 0.0347   # kg·m²
-Iyy  = 0.0458   # kg·m²
-Izz  = 0.0977   # kg·m²
+_FRAME_MODEL_PATH = (
+    f"{__import__('os').path.expanduser('~')}"
+    "/ardupilot/Tools/autotest/models/quad_2kg.json"
+)
+with open(_FRAME_MODEL_PATH) as _f:
+    _frame = json.load(_f)
+
+m    = _frame["mass"]                  # kg
+Ixx  = _frame["moment_inertia"][0]    # kg·m²
+Iyy  = _frame["moment_inertia"][1]    # kg·m²
+Izz  = _frame["moment_inertia"][2]    # kg·m²
 g    = 9.81     # m/s²
 dt   = 0.01     # s  (100 Hz LQR rate)
 
@@ -83,7 +91,7 @@ def dlqr(Ad, Bd, Q, R):
 # Horizontal position: small (LQR is near hover, large pos error clamped to 2m)
 q_pos_ne  = 0.05    # pos_N, pos_E
 q_pos_d   = 2.0     # pos_D (altitude — important to hold)
-q_vel_ne  = 0.5     # vel_N, vel_E  (0.05→0.5: stronger vel braking to overcome rate damping)
+q_vel_ne  = 0.2     # vel_N, vel_E  (0.05→0.5: stronger vel braking to overcome rate damping; 0.5→0.2: reduce tilt)
 q_vel_d   = 2.0     # vel_D
 q_att_rp  = 2.0     # att roll/pitch (10.0→2.0: reduce attitude gain to avoid large pitch rates)
 q_att_yaw = 5.0     # att yaw
@@ -96,8 +104,8 @@ q_int_vel_d  = 0.1  # altitude velocity integral
 
 # --- R weights for each control input ---
 r_F     = 1.0   # F_thrust
-r_Mroll = 1.0   # M_roll
-r_Mpitch= 1.0   # M_pitch
+r_Mroll = 2.0   # M_roll  (1.0→2.0: reduce tilt by suppressing moment output)
+r_Mpitch= 2.0   # M_pitch (1.0→2.0: reduce tilt by suppressing moment output)
 r_Myaw  = 2.0   # M_yaw
 
 # ============================================================================

@@ -121,7 +121,7 @@ FENCE_ENABLE,1                   # Fence enabled
 FENCE_TYPE,7                     # All fence types (max alt, circle, polygon)
 FENCE_ACTION,1                   # RTL on fence breach
 FENCE_ALT_MAX,120                # Maximum altitude (m)
-FENCE_RADIUS,300                 # Fence radius (m)
+FENCE_RADIUS,2000                # Fence radius (m)
 FENCE_MARGIN,2                   # Fence margin (m)
 
 # ============================================
