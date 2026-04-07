@@ -122,7 +122,7 @@ class ArduPilotMode99Env(gym.Env):
         # action[2] = vel_D: [-MAX_VEL_D, MAX_VEL_D] — vertical (NED: + = descend)
         # action[3] = yaw_rate: [-0.3, 0.3] rad/s
         # Converted to NED frame in step() before sending to Mode 99
-        MAX_VEL = 2.5       # m/s horizontal max (reduced to suppress TILT; raise after TILT resolved)
+        MAX_VEL = 3.5       # m/s horizontal max (tilt_scale handles recovery; was 2.5)
         MIN_VEL_FWD = 1.5   # m/s min toward-goal speed when outside goal (prevents hovering far away)
         MAX_VEL_LAT = 1.0   # m/s lateral max (reduced to prevent lateral drift)
         MAX_VEL_D = 0.3     # m/s vertical (conservative)
@@ -635,7 +635,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # Safety cap: prevent diagonal combination from exceeding MAX_VEL_H.
         # e.g. toward=4.0 + lateral=4.0 would give 5.66 m/s if not clipped.
-        MAX_VEL_H = 2.5
+        MAX_VEL_H = 3.5
         h_mag = np.sqrt(vel_cmd[0]**2 + vel_cmd[1]**2)
         if h_mag > MAX_VEL_H:
             scale = MAX_VEL_H / h_mag
@@ -847,11 +847,13 @@ class ArduPilotMode99Env(gym.Env):
         #    This reward still encourages going faster.
         reward += 0.3 * max(0.0, vel_toward_goal)
 
-        # 8c. Lateral velocity penalty: directly penalize sideways action
-        #     lateral is orthogonal to goal direction so it never reduces vel_toward_goal reward.
-        #     Without this penalty, lateral=±1.0 is "free" — no cost, no benefit lost.
-        #     -2.0 × |lateral| → at max lateral=1.0: -2.0/step, at lateral=0: 0/step
+        # 8c. Lateral and yaw-rate penalty: penalize unnecessary sideways motion and spinning
+        #     lateral: orthogonal to goal → never reduces vel_toward_goal, so "free" without penalty
+        #     yaw_rate: causes heading drift → LQR load increases → trajectory deviates + TILT risk
+        #     -2.0 × |lateral|  → at max ±1.0: -2.0/step
+        #     -2.0 × |yaw_rate| → at max ±0.3: -0.6/step
         reward -= 2.0 * abs(action[1])
+        reward -= 2.0 * abs(action[3])
 
         # 8b. Deceleration reward near goal
         #     Within 2× goal_radius, penalize high approach speed to prevent overshoot.
