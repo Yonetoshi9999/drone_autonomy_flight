@@ -146,6 +146,7 @@ class ArduPilotMode99Env(gym.Env):
         self.prev_goal_dist = None
         self.initial_goal_dist = 0.0
         self._approached_goal = False  # True once drone enters goal_radius*2 zone
+        self._goal_reached_flag = False  # True once drone first enters goal_radius (one-time)
         self.goal_position = np.zeros(3)
         self.start_position = np.zeros(3)
         self.episode_reward = 0.0
@@ -348,6 +349,7 @@ class ArduPilotMode99Env(gym.Env):
         self.prev_action = np.zeros(4)
         self.prev_goal_dist = None
         self._approached_goal = False
+        self._goal_reached_flag = False
         self._target_pos = np.zeros(3)  # reset; will be set after M99_REF capture
         self._vel_cmd_prev = np.zeros(3)  # low-pass filter state for vel_cmd
 
@@ -710,7 +712,7 @@ class ArduPilotMode99Env(gym.Env):
         self.episode_reward += reward
 
         # Check termination conditions
-        terminated = self.is_terminated()
+        terminated = self.is_terminated() or self._goal_reached_flag
         goal_dist_now = np.linalg.norm(self.goal_position - self.telemetry['position'])
         if goal_dist_now < self.goal_radius * 2.0:
             self._approached_goal = True
@@ -815,9 +817,10 @@ class ArduPilotMode99Env(gym.Env):
             dist_toward_goal = vel_toward_goal * 0.05  # positive = closing, negative = retreating
             reward += 10.0 * max(0.0, dist_toward_goal)  # toward goal → bonus, away from goal → no penalty
 
-        # 3. Goal reached bonus
-        if goal_dist < self.goal_radius:
+        # 3. Goal reached bonus (one-time: fires on first entry into goal_radius)
+        if goal_dist < self.goal_radius and not self._goal_reached_flag:
             reward += 1000.0
+            self._goal_reached_flag = True
 
         # 4. Progress bonus (approaching goal each step)
         if self.prev_goal_dist is not None:
@@ -870,11 +873,13 @@ class ArduPilotMode99Env(gym.Env):
         #     Makes hovering far from goal very costly; incentivizes closing distance quickly
         reward -= 0.05 * goal_dist
 
-        # 11. Hovering penalty: discourage stationary flight
+        # 11. Hovering penalty: discourage stationary flight (disabled inside goal)
         #     -1.0 × max(0, 1.0 - spd_h) → at 0 m/s: -1.0/step, at 1 m/s: 0/step
         #     Combined with time+dist penalty: hovering = -2.55/step, 2 m/s toward goal = +0.3/step
+        #     Disabled inside goal_radius so agent is not penalized for decelerating after arrival.
         spd_h = np.sqrt(velocity[0]**2 + velocity[1]**2)
-        reward -= 1.0 * max(0.0, 1.0 - spd_h)
+        if goal_dist >= self.goal_radius:
+            reward -= 1.0 * max(0.0, 1.0 - spd_h)
 
         # 12. Early arrival bonus: reward reaching goal faster
         #     +500 × (1 - step/max_steps) → at step 300: +400, at step 1200: +100
