@@ -847,13 +847,11 @@ class ArduPilotMode99Env(gym.Env):
         #    This reward still encourages going faster.
         reward += 0.3 * max(0.0, vel_toward_goal)
 
-        # 8c. Heading alignment bonus: reward vel_cmd pointing toward goal
-        #     cos_sim = action[0] / |vel_cmd_h| → 1.0 when lateral=0, < 1 when drifting sideways
-        #     Encourages suppressing lateral component without constraining trajectory shape
-        vel_cmd_mag = np.sqrt(action[0]**2 + action[1]**2)
-        if vel_cmd_mag > 1e-6:
-            heading_align = action[0] / vel_cmd_mag  # cos(angle between vel_cmd and goal_dir)
-            reward += 1.5 * heading_align
+        # 8c. Lateral velocity penalty: directly penalize sideways action
+        #     lateral is orthogonal to goal direction so it never reduces vel_toward_goal reward.
+        #     Without this penalty, lateral=±1.0 is "free" — no cost, no benefit lost.
+        #     -2.0 × |lateral| → at max lateral=1.0: -2.0/step, at lateral=0: 0/step
+        reward -= 2.0 * abs(action[1])
 
         # 8b. Deceleration reward near goal
         #     Within 2× goal_radius, penalize high approach speed to prevent overshoot.
