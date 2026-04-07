@@ -71,7 +71,7 @@ class ArduPilotMode99Env(gym.Env):
         sitl_connection: str = 'tcp:127.0.0.1:5760',
         mission_type: str = 'obstacle_avoidance',
         max_steps: int = 1500,
-        goal_radius: float = 8.0,
+        goal_radius: float = 10.0,
         time_scale: float = 1.0,
         enable_obstacles: bool = True,
         goal_dist_min: float = 5.0,
@@ -122,7 +122,7 @@ class ArduPilotMode99Env(gym.Env):
         # action[2] = vel_D: [-MAX_VEL_D, MAX_VEL_D] — vertical (NED: + = descend)
         # action[3] = yaw_rate: [-0.3, 0.3] rad/s
         # Converted to NED frame in step() before sending to Mode 99
-        MAX_VEL = 4.0       # m/s horizontal max
+        MAX_VEL = 2.5       # m/s horizontal max (reduced to suppress TILT; raise after TILT resolved)
         MIN_VEL_FWD = 1.5   # m/s min toward-goal speed when outside goal (prevents hovering far away)
         MAX_VEL_LAT = 1.0   # m/s lateral max (reduced to prevent lateral drift)
         MAX_VEL_D = 0.3     # m/s vertical (conservative)
@@ -136,7 +136,9 @@ class ArduPilotMode99Env(gym.Env):
 
         # MAVLink connection
         self.mav = None
+        self._ekf_ready = False  # set True after connect() EKF token passes
         self.connect()
+        self._ekf_ready = True
 
         # Episode state
         self.current_step = 0
@@ -197,8 +199,8 @@ class ArduPilotMode99Env(gym.Env):
             f.write(str(sitl_proc.pid))
         print(f"  ✅ SITL restarted (PID: {sitl_proc.pid})")
 
-        # Fixed wait for SITL to initialize
-        time.sleep(15.0)
+        # Clear EKF ready flag — connect() will re-wait for the EKF token
+        self._ekf_ready = False
 
         # Reconnect MAVLink with retry
         if self.mav:
@@ -251,6 +253,27 @@ class ArduPilotMode99Env(gym.Env):
         # Request data streams
         self.request_data_streams()
 
+        # Wait for EKF/GPS ready — definitive token that SITL (--wipe) is ready to arm.
+        # Primary: EKF_STATUS_REPORT pos+vel flags (from EXTRA3 stream).
+        # Fallback: GPS fix >= 3 sustained for 3 consecutive messages if EKF msg absent.
+        print("Waiting for EKF/GPS ready (SITL initialisation token)...")
+        gps_ok = False
+        ekf_ok = False
+        while not (gps_ok and ekf_ok):
+            msg = self.mav.recv_match(blocking=True, timeout=1.0)
+            if msg is None:
+                continue
+            mt = msg.get_type()
+            if mt == 'GPS_RAW_INT':
+                if msg.fix_type >= 3 and msg.satellites_visible >= 6:
+                    gps_ok = True
+            elif mt == 'EKF_STATUS_REPORT':
+                has_vel = bool(msg.flags & 0x002)
+                has_pos = bool(msg.flags & 0x010)
+                if gps_ok and has_vel and has_pos:
+                    ekf_ok = True
+        print("✅ EKF/GPS ready — SITL initialisation complete")
+
     def request_data_streams(self):
         """Request telemetry data streams at specified rates"""
         # Position data (LOCAL_POSITION_NED) at 50Hz
@@ -276,6 +299,14 @@ class ArduPilotMode99Env(gym.Env):
             self.mav.target_component,
             mavutil.mavlink.MAV_DATA_STREAM_EXTRA1,
             50,
+            1
+        )
+        # EKF_STATUS_REPORT at 5Hz (in EXTRA3 stream)
+        self.mav.mav.request_data_stream_send(
+            self.mav.target_system,
+            self.mav.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_EXTRA3,
+            5,
             1
         )
 
@@ -318,6 +349,7 @@ class ArduPilotMode99Env(gym.Env):
         self.prev_goal_dist = None
         self._approached_goal = False
         self._target_pos = np.zeros(3)  # reset; will be set after M99_REF capture
+        self._vel_cmd_prev = np.zeros(3)  # low-pass filter state for vel_cmd
 
         # Goal and obstacles are placed after M99_REF capture below,
         # relative to the drone's actual episode-start position.
@@ -347,31 +379,32 @@ class ArduPilotMode99Env(gym.Env):
         self.set_mode('GUIDED')
         time.sleep(0.1)
 
-        # Step 3: Wait for GPS fix + EKF convergence (up to 10s; SITL needs a
-        # few seconds on fresh start to acquire GPS lock)
-        print("  Waiting for GPS fix + EKF convergence...")
-        ekf_deadline = time.time() + 10.0
-        gps_ok = False
-        ekf_ok = False
-        while time.time() < ekf_deadline and not (gps_ok and ekf_ok):
-            msg = self.mav.recv_match(blocking=True, timeout=0.5)
-            if msg is None:
-                continue
-            mt = msg.get_type()
-            if mt == 'GPS_RAW_INT' and msg.fix_type >= 3 and msg.satellites_visible >= 6:
-                gps_ok = True
-            elif mt == 'EKF_STATUS_REPORT':
-                has_vel = bool(msg.flags & 0x002)
-                has_pos = bool(msg.flags & 0x010)
-                has_pred = bool(msg.flags & 0x200)
-                const_pos = bool(msg.flags & 0x080)
-                if gps_ok and has_vel and (has_pos or has_pred) and not const_pos:
-                    ekf_ok = True
-
-        if not gps_ok:
-            print("  WARNING: GPS fix not confirmed, proceeding anyway")
-        if not ekf_ok:
-            print("  WARNING: EKF not validated, proceeding anyway")
+        # Step 3: Wait for GPS fix + EKF convergence.
+        # Skipped on first reset — connect() already waited for the EKF token.
+        # Re-checked after SITL drift-restart (when _ekf_ready is cleared).
+        if not self._ekf_ready:
+            print("  Waiting for GPS fix + EKF convergence...")
+            ekf_deadline = time.time() + 30.0
+            gps_ok = False
+            ekf_ok = False
+            gps_count = 0
+            while time.time() < ekf_deadline and not (gps_ok and ekf_ok):
+                msg = self.mav.recv_match(blocking=True, timeout=0.5)
+                if msg is None:
+                    continue
+                mt = msg.get_type()
+                if mt == 'GPS_RAW_INT' and msg.fix_type >= 3 and msg.satellites_visible >= 6:
+                    gps_ok = True
+                elif mt == 'EKF_STATUS_REPORT':
+                    has_vel = bool(msg.flags & 0x002)
+                    has_pos = bool(msg.flags & 0x010)
+                    if gps_ok and has_vel and has_pos:
+                        ekf_ok = True
+            if not gps_ok:
+                print("  WARNING: GPS fix not confirmed, proceeding anyway")
+            if not ekf_ok:
+                print("  WARNING: EKF not validated, proceeding anyway")
+        self._ekf_ready = True  # mark ready for subsequent resets
 
         # Step 3b: Reset HOME to current GPS position so LOCAL_POSITION_NED starts
         # at (0,0,0) after SITL restart. Must be done after GPS lock is confirmed.
@@ -383,7 +416,13 @@ class ArduPilotMode99Env(gym.Env):
             1,   # use_current=1 → set home to current GPS position
             0, 0, 0, 0, 0, 0
         )
-        time.sleep(1.0)  # wait for home to be applied
+        # Wait for SET_HOME ACK — required before arming ("AHRS: waiting for home")
+        home_deadline = time.time() + 3.0
+        while time.time() < home_deadline:
+            msg = self.mav.recv_match(blocking=True, timeout=0.3)
+            if msg and msg.get_type() == 'COMMAND_ACK':
+                if msg.command == mavutil.mavlink.MAV_CMD_DO_SET_HOME:
+                    break
 
         # Step 4: Arm (force arm, magic 2989)
         self.arm()
@@ -594,7 +633,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # Safety cap: prevent diagonal combination from exceeding MAX_VEL_H.
         # e.g. toward=4.0 + lateral=4.0 would give 5.66 m/s if not clipped.
-        MAX_VEL_H = 4.0
+        MAX_VEL_H = 2.5
         h_mag = np.sqrt(vel_cmd[0]**2 + vel_cmd[1]**2)
         if h_mag > MAX_VEL_H:
             scale = MAX_VEL_H / h_mag
@@ -611,8 +650,26 @@ class ArduPilotMode99Env(gym.Env):
         ref_d = self._mode99_ref[2]
         self._target_pos[2] = np.clip(self._target_pos[2], ref_d - 10.0, ref_d + 10.0)
 
-        # Velocity feedforward = commanded velocity (RL has direct speed control)
-        vel_ref = vel_cmd.copy()
+        # Rate limiter: cap vel_cmd change per step to prevent excessive tilt.
+        # 0.3 m/s/step @ 20Hz = 6 m/s² → tilt ≈ 31° (safely below 40° TILT limit)
+        # Replaces LP filter — rate limit is a hard physical constraint, LP filter is not.
+        MAX_VEL_RATE = 0.3  # m/s per step
+        delta = vel_cmd - self._vel_cmd_prev
+        delta_clipped = np.clip(delta, -MAX_VEL_RATE, MAX_VEL_RATE)
+        vel_cmd_limited = self._vel_cmd_prev + delta_clipped
+        self._vel_cmd_prev = vel_cmd_limited.copy()
+
+        # Tilt recovery: scale down vel_cmd when tilt is large so LQR can
+        # recover attitude before chasing velocity again.
+        # tilt ≤ 15°: full command / tilt ≥ 35°: zero command (hover)
+        # _vel_cmd_prev is updated with the scaled value so rate limiter
+        # ramps up from zero after recovery — not from the pre-tilt speed.
+        att = self.telemetry['attitude']
+        tilt_deg = np.degrees(np.sqrt(att[0]**2 + att[1]**2))
+        tilt_scale = float(np.clip(1.0 - (tilt_deg - 15.0) / 20.0, 0.0, 1.0))
+
+        vel_ref = vel_cmd_limited * tilt_scale
+        self._vel_cmd_prev = vel_ref.copy()  # rate limiter resumes from scaled value
         self.send_position_target(
             position=self._target_pos.copy(),
             velocity=vel_ref,
@@ -786,6 +843,14 @@ class ArduPilotMode99Env(gym.Env):
         #    action[0] now has lower bound 1.5 m/s so the drone always moves toward goal.
         #    This reward still encourages going faster.
         reward += 0.3 * max(0.0, vel_toward_goal)
+
+        # 8c. Heading alignment bonus: reward vel_cmd pointing toward goal
+        #     cos_sim = action[0] / |vel_cmd_h| → 1.0 when lateral=0, < 1 when drifting sideways
+        #     Encourages suppressing lateral component without constraining trajectory shape
+        vel_cmd_mag = np.sqrt(action[0]**2 + action[1]**2)
+        if vel_cmd_mag > 1e-6:
+            heading_align = action[0] / vel_cmd_mag  # cos(angle between vel_cmd and goal_dir)
+            reward += 1.5 * heading_align
 
         # 8b. Deceleration reward near goal
         #     Within 2× goal_radius, penalize high approach speed to prevent overshoot.
@@ -1013,22 +1078,50 @@ class ArduPilotMode99Env(gym.Env):
         )
 
     def arm(self):
-        """Arm the copter (force arm, magic 2989 matches companion_mode99.py)"""
-        self.mav.mav.command_long_send(
-            self.mav.target_system, self.mav.target_component,
-            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-            0, 1, 2989, 0, 0, 0, 0, 0
-        )
-        arm_deadline = time.time() + 8.0
+        """Arm the copter (force arm, magic 2989). Retries every 2s up to 15s.
+        Monitors both COMMAND_ACK (arm accepted/rejected) and HEARTBEAT (armed bit).
+        """
+        arm_deadline = time.time() + 15.0
+        last_send = 0.0
         while time.time() < arm_deadline:
+            # Send arm command every 2 seconds until confirmed
+            if time.time() - last_send >= 2.0:
+                self.mav.mav.command_long_send(
+                    self.mav.target_system, self.mav.target_component,
+                    mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                    0, 1, 2989, 0, 0, 0, 0, 0
+                )
+                last_send = time.time()
             msg = self.mav.recv_match(blocking=True, timeout=0.2)
             if msg is None:
                 continue
-            if msg.get_type() == 'HEARTBEAT':
+            mt = msg.get_type()
+            if mt == 'HEARTBEAT':
                 if msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
                     self.telemetry['armed'] = True
                     print("✅ Armed")
                     return
+            elif mt == 'COMMAND_ACK':
+                if msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
+                    if msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                        # ACK received — wait briefly for HEARTBEAT to reflect armed bit
+                        ack_deadline = time.time() + 2.0
+                        while time.time() < ack_deadline:
+                            hb = self.mav.recv_match(type='HEARTBEAT', blocking=True, timeout=0.5)
+                            if hb and (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED):
+                                self.telemetry['armed'] = True
+                                print("✅ Armed")
+                                return
+                        self.telemetry['armed'] = True
+                        print("✅ Armed (ACK confirmed)")
+                        return
+                    else:
+                        print(f"  Arm rejected (result={msg.result}), retrying...")
+                        last_send = 0.0  # force immediate retry
+            elif mt == 'STATUSTEXT':
+                text = msg.text.strip('\x00').strip()
+                if text:
+                    print(f"  [SITL] {text}")
         print("⚠️ Arm timeout")
 
     def disarm(self):

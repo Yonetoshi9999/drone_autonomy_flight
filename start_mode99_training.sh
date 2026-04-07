@@ -117,6 +117,7 @@ cd "$ARDUPILOT_DIR" && "$ARDUPILOT_DIR/build/sitl/bin/arducopter" \
     --speedup "$SITL_SPEEDUP" \
     --defaults "$ARDUPILOT_DIR/Tools/autotest/default_params/copter.parm,$PARAM_FILE" \
     --sim-address=127.0.0.1 \
+    -w \
     -I0
 SITLEOF
 
@@ -125,6 +126,7 @@ cd "$ARDUPILOT_DIR" && "$ARDUPILOT_DIR/build/sitl/bin/arducopter" \
     --speedup "$SITL_SPEEDUP" \
     --defaults "$ARDUPILOT_DIR/Tools/autotest/default_params/copter.parm,$PARAM_FILE" \
     --sim-address=127.0.0.1 \
+    -w \
     -I0 \
     >/tmp/sitl_mode99.log 2>&1 \
     &

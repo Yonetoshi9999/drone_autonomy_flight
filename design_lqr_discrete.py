@@ -93,7 +93,7 @@ q_pos_ne  = 0.05    # pos_N, pos_E
 q_pos_d   = 2.0     # pos_D (altitude — important to hold)
 q_vel_ne  = 0.2     # vel_N, vel_E  (0.05→0.5: stronger vel braking to overcome rate damping; 0.5→0.2: reduce tilt)
 q_vel_d   = 2.0     # vel_D
-q_att_rp  = 2.0     # att roll/pitch (10.0→2.0: reduce attitude gain to avoid large pitch rates)
+q_att_rp  = 0.2     # att roll/pitch (10.0→2.0→0.5→0.2: allow natural tilt during forward flight)
 q_att_yaw = 5.0     # att yaw
 q_rate_rp = 1.5     # roll/pitch rate (20.0→1.5: allow braking; continuous ζ≈0.8 with q_att=2.0)
 q_rate_r  = 0.5     # yaw rate
@@ -104,8 +104,8 @@ q_int_vel_d  = 0.1  # altitude velocity integral
 
 # --- R weights for each control input ---
 r_F     = 1.0   # F_thrust
-r_Mroll = 2.0   # M_roll  (1.0→2.0: reduce tilt by suppressing moment output)
-r_Mpitch= 2.0   # M_pitch (1.0→2.0: reduce tilt by suppressing moment output)
+r_Mroll = 5.0   # M_roll  (1.0→2.0→5.0: reduce tilt by suppressing moment output)
+r_Mpitch= 5.0   # M_pitch (1.0→2.0→5.0: reduce tilt by suppressing moment output)
 r_Myaw  = 2.0   # M_yaw
 
 # ============================================================================

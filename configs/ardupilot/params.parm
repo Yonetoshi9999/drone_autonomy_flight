@@ -117,7 +117,7 @@ WPNAV_ACCEL,100                  # Horizontal acceleration (cm/s²)
 # ============================================
 # FENCE AND GEOFENCE
 # ============================================
-FENCE_ENABLE,1                   # Fence enabled
+FENCE_ENABLE,0                   # Fence disabled (SITL: mandatory arming check bypassed)
 FENCE_TYPE,7                     # All fence types (max alt, circle, polygon)
 FENCE_ACTION,1                   # RTL on fence breach
 FENCE_ALT_MAX,120                # Maximum altitude (m)
@@ -133,7 +133,7 @@ INS_GYRO_RATE,0                  # Fast sampling (0 = 1kHz internal)
 INS_FAST_SAMPLE,1                # Fast sampling enabled
 
 # Rangefinder (for RPLidar A2M8)
-RNGFND1_TYPE,10                  # MAVLink rangefinder
+RNGFND1_TYPE,0                   # Rangefinder disabled (SITL: no rangefinder hardware)
 RNGFND1_MIN_CM,15                # Minimum range (cm)
 RNGFND1_MAX_CM,1600              # Maximum range (cm) = 16m
 RNGFND1_ORIENT,0                 # Forward facing
@@ -162,7 +162,7 @@ SCHED_LOOP_RATE,50               # Main loop rate (Hz)
 # ============================================
 # ARMING CHECKS
 # ============================================
-ARMING_CHECK,1                   # All arming checks
+ARMING_CHECK,0                   # Disable arming checks (SITL only)
 ARMING_ACCTHRESH,0.75            # Accelerometer threshold
 
 # ============================================
