@@ -856,13 +856,21 @@ class ArduPilotMode99Env(gym.Env):
         reward -= 2.0 * abs(action[3])
 
         # 8b. Deceleration reward near goal
-        #     Within 2× goal_radius, penalize high approach speed to prevent overshoot.
+        #     Within 1.5× goal_radius (15m), penalize high approach speed to prevent overshoot.
         #     Smoothly increases as drone approaches: coefficient ramps from 0 → 1.0
-        #     e.g. goal_radius=5m, threshold=10m: at 8m dist, coef=0.2; at 5m, coef=0.5
-        decel_threshold = self.goal_radius * 1.0
+        #     Expanded from 1.0× to 1.5× so decel signal starts before PASSED GOAL zone (15m).
+        decel_threshold = self.goal_radius * 1.5
         if goal_dist < decel_threshold:
             proximity = 1.0 - goal_dist / decel_threshold  # 0 at threshold, 1 at goal
             reward -= 1.0 * proximity * max(0.0, vel_toward_goal - 1.0)
+
+        # 8c. Tilt penalty: penalize high tilt outside goal (goal interior exempt for braking)
+        #     Max decel (0.3 m/s/step) = tilt ~31°, so goal braking would be penalized unfairly.
+        #     Threshold 25° matches normal flight at MAX_VEL=3.5 m/s.
+        att = self.telemetry['attitude']
+        tilt_deg = np.degrees(np.sqrt(att[0]**2 + att[1]**2))
+        if tilt_deg > 25 and goal_dist >= self.goal_radius:
+            reward -= 0.5 * (tilt_deg - 25)  # e.g. tilt=30° → -2.5/step, tilt=35° → -5.0/step
 
         # 9. Time penalty: discourage hovering in place
         #    -1.0/step × 1500steps = -1500 → strong incentive for high-speed goal approach
