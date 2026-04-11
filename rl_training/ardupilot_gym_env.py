@@ -668,7 +668,7 @@ class ArduPilotMode99Env(gym.Env):
         # ramps up from zero after recovery — not from the pre-tilt speed.
         att = self.telemetry['attitude']
         tilt_deg = np.degrees(np.sqrt(att[0]**2 + att[1]**2))
-        tilt_scale = float(np.clip(1.0 - (tilt_deg - 15.0) / 20.0, 0.0, 1.0))
+        tilt_scale = float(np.clip(1.0 - (tilt_deg - 10.0) / 20.0, 0.0, 1.0))
 
         vel_ref = vel_cmd_limited * tilt_scale
         self._vel_cmd_prev = vel_ref.copy()  # rate limiter resumes from scaled value
@@ -805,27 +805,36 @@ class ArduPilotMode99Env(gym.Env):
         goal_dist = np.linalg.norm(goal_relative)
         obstacles = obs[14:20]
 
-        # 1. Goal-directed travel bonus: reward moving TOWARD the goal (not any direction)
+        # 1. Goal-directed travel bonus: bilateral (approach → bonus, retreat → penalty)
         #    vel_toward_goal = velocity · goal_dir (positive = toward goal, negative = away)
         #    dist_toward_goal = vel_toward_goal * dt (meters closed per step)
-        #    × 10 coefficient → at 1.5 m/s toward goal: +0.75/step
-        #    Stored in vel_toward_goal for use in speed bonus (#8) below.
+        #    × 10 coefficient → at 1.5 m/s toward goal: +0.75/step, at 1.5 m/s away: -0.75/step
         vel_toward_goal = 0.0
+        speed_h = np.linalg.norm(velocity[:2])
         if goal_dist > 1e-6:
             goal_dir_h = goal_relative[:2] / (np.linalg.norm(goal_relative[:2]) + 1e-6)
             vel_toward_goal = velocity[0] * goal_dir_h[0] + velocity[1] * goal_dir_h[1]
             dist_toward_goal = vel_toward_goal * 0.05  # positive = closing, negative = retreating
-            reward += 10.0 * max(0.0, dist_toward_goal)  # toward goal → bonus, away from goal → no penalty
+            reward += 10.0 * dist_toward_goal  # bilateral: retreating → penalty
+
+        # 1b. Alignment bonus/penalty: reward goal-directed flight, penalize lateral drift
+        #     alignment = vel_toward_goal / speed_h: +1=straight, 0=perpendicular, -1=retreating
+        #     lateral_speed = sqrt(speed_h² - vel_toward_goal²): explicit lateral penalty
+        if speed_h > 0.1:
+            alignment = vel_toward_goal / speed_h
+            reward += 2.0 * alignment                              # straight → +2.0, sideways → 0, retreat → -2.0
+            vel_lateral_actual = np.sqrt(max(0.0, speed_h**2 - vel_toward_goal**2))
+            reward -= 3.0 * vel_lateral_actual                     # lateral speed → explicit penalty
 
         # 3. Goal reached bonus (one-time: fires on first entry into goal_radius)
         if goal_dist < self.goal_radius and not self._goal_reached_flag:
             reward += 1000.0
             self._goal_reached_flag = True
 
-        # 4. Progress bonus (approaching goal each step)
+        # 4. Progress bonus (approaching goal each step) — bilateral
         if self.prev_goal_dist is not None:
             dist_improvement = self.prev_goal_dist - goal_dist
-            reward += 2.0 * max(0.0, dist_improvement)  # approaching goal → bonus, retreating → no penalty
+            reward += 2.0 * dist_improvement  # bilateral: approaching → bonus, retreating → penalty
 
         # 5. Obstacle proximity penalty
         for d in obstacles:
@@ -842,10 +851,10 @@ class ArduPilotMode99Env(gym.Env):
         alt_error = max(0.0, abs(current_alt - target_alt) - 1.0)
         reward -= 0.1 * alt_error
 
-        # 8. Directional speed bonus based on actual velocity toward goal
+        # 8. Directional speed bonus based on actual velocity toward goal — bilateral
         #    action[0] now has lower bound 1.5 m/s so the drone always moves toward goal.
         #    This reward still encourages going faster.
-        reward += 0.3 * max(0.0, vel_toward_goal)
+        reward += 0.3 * vel_toward_goal
 
         # 8c. Lateral and yaw-rate penalty: penalize unnecessary sideways motion and spinning
         #     lateral: orthogonal to goal → never reduces vel_toward_goal, so "free" without penalty
