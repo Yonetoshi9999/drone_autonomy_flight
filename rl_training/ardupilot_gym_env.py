@@ -145,7 +145,7 @@ class ArduPilotMode99Env(gym.Env):
         self.prev_action = np.zeros(4)
         self.prev_goal_dist = None
         self.initial_goal_dist = 0.0
-        self._approached_goal = False  # True once drone enters goal_radius*2 zone
+        self._approached_goal = False  # True once drone enters goal_radius zone
         self._goal_reached_flag = False  # True once drone first enters goal_radius (one-time)
         self.goal_position = np.zeros(3)
         self.start_position = np.zeros(3)
@@ -714,7 +714,7 @@ class ArduPilotMode99Env(gym.Env):
         # Check termination conditions
         terminated = self.is_terminated() or self._goal_reached_flag
         goal_dist_now = np.linalg.norm(self.goal_position - self.telemetry['position'])
-        if goal_dist_now < self.goal_radius * 2.0:
+        if goal_dist_now < self.goal_radius * 1.0:
             self._approached_goal = True
         passed_goal = (self._approached_goal and
                        goal_dist_now > self.goal_radius * 1.5)
@@ -865,10 +865,10 @@ class ArduPilotMode99Env(gym.Env):
         reward -= 2.0 * abs(action[3])
 
         # 8b. Deceleration reward near goal
-        #     Within 1.5× goal_radius (15m), penalize high approach speed to prevent overshoot.
+        #     Within 1.0× goal_radius (10m), penalize high approach speed to prevent overshoot.
         #     Smoothly increases as drone approaches: coefficient ramps from 0 → 1.0
-        #     Expanded from 1.0× to 1.5× so decel signal starts before PASSED GOAL zone (15m).
-        decel_threshold = self.goal_radius * 1.5
+        #     1.0× (not 1.5×) so decel zone doesn't overlap with goal_min when goal_min=15m.
+        decel_threshold = self.goal_radius * 1.0
         if goal_dist < decel_threshold:
             proximity = 1.0 - goal_dist / decel_threshold  # 0 at threshold, 1 at goal
             reward -= 1.0 * proximity * max(0.0, vel_toward_goal - 1.0)
