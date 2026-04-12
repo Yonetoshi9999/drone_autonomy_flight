@@ -663,7 +663,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # Tilt recovery: scale down vel_cmd when tilt is large so LQR can
         # recover attitude before chasing velocity again.
-        # tilt ≤ 15°: full command / tilt ≥ 35°: zero command (hover)
+        # tilt ≤ 10°: full command / tilt ≥ 30°: zero command (hover)
         # _vel_cmd_prev is updated with the scaled value so rate limiter
         # ramps up from zero after recovery — not from the pre-tilt speed.
         att = self.telemetry['attitude']
@@ -874,12 +874,14 @@ class ArduPilotMode99Env(gym.Env):
             reward -= 1.0 * proximity * max(0.0, vel_toward_goal - 1.0)
 
         # 8c. Tilt penalty: penalize high tilt outside goal (goal interior exempt for braking)
-        #     Max decel (0.3 m/s/step) = tilt ~31°, so goal braking would be penalized unfairly.
-        #     Threshold 25° matches normal flight at MAX_VEL=3.5 m/s.
+        #     Threshold lowered to 20° and coefficient increased to 2.0 (from 25°/0.5)
+        #     to make tilt cost exceed speed reward (+6.15/step at 3.5m/s):
+        #       tilt=25°: -10.0/step, tilt=30°: -20.0/step, tilt=35°: -30.0/step
+        #     This forces the agent to learn that high-speed flight is net-negative.
         att = self.telemetry['attitude']
         tilt_deg = np.degrees(np.sqrt(att[0]**2 + att[1]**2))
-        if tilt_deg > 25 and goal_dist >= self.goal_radius:
-            reward -= 0.5 * (tilt_deg - 25)  # e.g. tilt=30° → -2.5/step, tilt=35° → -5.0/step
+        if tilt_deg > 20 and goal_dist >= self.goal_radius:
+            reward -= 2.0 * (tilt_deg - 20)  # e.g. tilt=25° → -10.0/step, tilt=35° → -30.0/step
 
         # 9. Time penalty: discourage hovering in place
         #    -1.0/step × 1500steps = -1500 → strong incentive for high-speed goal approach
