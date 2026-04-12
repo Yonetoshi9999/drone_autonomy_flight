@@ -653,9 +653,11 @@ class ArduPilotMode99Env(gym.Env):
         self._target_pos[2] = np.clip(self._target_pos[2], ref_d - 10.0, ref_d + 10.0)
 
         # Rate limiter: cap vel_cmd change per step to prevent excessive tilt.
-        # 0.3 m/s/step @ 20Hz = 6 m/s² → tilt ≈ 31° (safely below 40° TILT limit)
-        # Replaces LP filter — rate limit is a hard physical constraint, LP filter is not.
-        MAX_VEL_RATE = 0.3  # m/s per step
+        # 0.05 m/s/step @ 20Hz = 1.0 m/s² = 0.1g
+        # Diagonal worst-case (N+E simultaneously): √2 × 1.0 = 1.41 m/s² → tilt ≈ 8°
+        # Previous value (0.3 m/s/step = 6 m/s²) allowed diagonal acceleration of
+        # 8.49 m/s² → tilt ≈ 41°, matching the 40° termination threshold directly.
+        MAX_VEL_RATE = 0.05  # m/s per step (= 1 m/s²)
         delta = vel_cmd - self._vel_cmd_prev
         delta_clipped = np.clip(delta, -MAX_VEL_RATE, MAX_VEL_RATE)
         vel_cmd_limited = self._vel_cmd_prev + delta_clipped
