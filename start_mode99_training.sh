@@ -134,12 +134,17 @@ SITL_PID=$!
 echo "  SITL PID: $SITL_PID"
 echo "$SITL_PID" > /tmp/sitl_mode99.pid
 
-# Cleanup SITL on exit (Ctrl-C or normal exit)
+# Cleanup SITL and Python on exit (Ctrl-C or normal exit)
 cleanup() {
     echo ""
-    echo "Stopping SITL (PID $SITL_PID)..."
+    echo "Stopping training (SITL PID $SITL_PID, Python PID ${PYTHON_PID:-unknown})..."
+    kill "$PYTHON_PID" 2>/dev/null || true
     kill "$SITL_PID" 2>/dev/null || true
+    pkill -f "arducopter" 2>/dev/null || true
+    pkill -f "train_mode99_rl" 2>/dev/null || true
+    wait "$PYTHON_PID" 2>/dev/null || true
     wait "$SITL_PID" 2>/dev/null || true
+    rm -f /tmp/sitl_mode99.pid
     echo "Done."
 }
 trap cleanup EXIT INT TERM
@@ -236,4 +241,7 @@ python3 -u train_mode99_rl.py \
     $GOAL_MAX \
     $GOAL_RADIUS \
     $ENT_COEF \
-    $MAX_STEPS
+    $MAX_STEPS &
+PYTHON_PID=$!
+echo "$SITL_PID $PYTHON_PID" > /tmp/sitl_mode99.pid
+wait $PYTHON_PID
