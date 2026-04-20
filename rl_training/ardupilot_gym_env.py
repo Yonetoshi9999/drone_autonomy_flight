@@ -122,9 +122,9 @@ class ArduPilotMode99Env(gym.Env):
         # action[2] = vel_D: [-MAX_VEL_D, MAX_VEL_D] — vertical (NED: + = descend)
         # action[3] = yaw_rate: [-0.3, 0.3] rad/s
         # Converted to NED frame in step() before sending to Mode 99
-        MAX_VEL = 3.5       # m/s horizontal max (tilt_scale handles recovery; was 2.5)
-        MIN_VEL_FWD = 1.5   # m/s min toward-goal speed when outside goal (prevents hovering far away)
-        MAX_VEL_LAT = 1.0   # m/s lateral max (reduced to prevent lateral drift)
+        MAX_VEL = 3.5       # m/s horizontal max (action space bound — do not change for resume compatibility)
+        MIN_VEL_FWD = 1.0   # m/s min toward-goal speed when outside goal (was 1.5; lowered for short-range goals)
+        MAX_VEL_LAT = 0.3   # m/s lateral max (was 1.0; reduced to 15% of MAX_VEL_H=2.0 to prevent thrashing)
         MAX_VEL_D = 0.3     # m/s vertical (conservative)
         self.min_vel_fwd = MIN_VEL_FWD
         self.action_space = spaces.Box(
@@ -635,7 +635,8 @@ class ArduPilotMode99Env(gym.Env):
 
         # Safety cap: prevent diagonal combination from exceeding MAX_VEL_H.
         # e.g. toward=4.0 + lateral=4.0 would give 5.66 m/s if not clipped.
-        MAX_VEL_H = 3.5
+        # 2.0 m/s for short-range goals (10-15m); increase when goal distance extends.
+        MAX_VEL_H = 2.0
         h_mag = np.sqrt(vel_cmd[0]**2 + vel_cmd[1]**2)
         if h_mag > MAX_VEL_H:
             scale = MAX_VEL_H / h_mag
@@ -741,7 +742,7 @@ class ArduPilotMode99Env(gym.Env):
                 print(f"💥 CRASH! step={self.current_step} reward={self.episode_reward:.1f}")
             elif self.telemetry['position'][2] > -5.0:
                 print(f"🌍 GROUND! step={self.current_step} reward={self.episode_reward:.1f}")
-            elif tilt_at_end > np.radians(40.0):
+            elif tilt_at_end > np.radians(45.0):
                 print(f"↗️ HIGH TILT (continued) step={self.current_step} reward={self.episode_reward:.1f} tilt={np.degrees(tilt_at_end):.1f}°")
             elif not self.telemetry['armed']:
                 print(f"⚠️ DISARMED! step={self.current_step} reward={self.episode_reward:.1f}")
@@ -927,10 +928,10 @@ class ArduPilotMode99Env(gym.Env):
         if self.telemetry['position'][2] > -5.0:
             return True
 
-        # Excessive tilt (> 40°): unstable, end episode
+        # Excessive tilt (> 45°): unstable, end episode
         att = self.telemetry['attitude']
         tilt = np.sqrt(att[0]**2 + att[1]**2)
-        if tilt > np.radians(40.0):
+        if tilt > np.radians(45.0):
             return True
 
         # Disarmed unexpectedly
