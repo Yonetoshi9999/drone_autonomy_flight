@@ -147,6 +147,7 @@ class ArduPilotMode99Env(gym.Env):
         self.initial_goal_dist = 0.0
         self._approached_goal = False  # True once drone enters goal_radius zone
         self._goal_reached_flag = False  # True once drone first enters goal_radius (one-time)
+        self._min_goal_dist = float('inf')  # closest approach to goal this episode
         self.goal_position = np.zeros(3)
         self.start_position = np.zeros(3)
         self.episode_reward = 0.0
@@ -350,6 +351,7 @@ class ArduPilotMode99Env(gym.Env):
         self.prev_goal_dist = None
         self._approached_goal = False
         self._goal_reached_flag = False
+        self._min_goal_dist = float('inf')
         self._target_pos = np.zeros(3)  # reset; will be set after M99_REF capture
         self._vel_cmd_prev = np.zeros(3)  # low-pass filter state for vel_cmd
 
@@ -666,12 +668,12 @@ class ArduPilotMode99Env(gym.Env):
 
         # Tilt recovery: scale down vel_cmd when tilt is large so LQR can
         # recover attitude before chasing velocity again.
-        # tilt ≤ 10°: full command / tilt ≥ 30°: zero command (hover)
+        # tilt ≤ 15°: full command / tilt ≥ 35°: zero command (hover)
         # _vel_cmd_prev is updated with the scaled value so rate limiter
         # ramps up from zero after recovery — not from the pre-tilt speed.
         att = self.telemetry['attitude']
         tilt_deg = np.degrees(np.sqrt(att[0]**2 + att[1]**2))
-        tilt_scale = float(np.clip(1.0 - (tilt_deg - 10.0) / 20.0, 0.0, 1.0))
+        tilt_scale = float(np.clip(1.0 - (tilt_deg - 15.0) / 20.0, 0.0, 1.0))
 
         vel_ref = vel_cmd_limited * tilt_scale
         self._vel_cmd_prev = vel_ref.copy()  # rate limiter resumes from scaled value
@@ -717,11 +719,26 @@ class ArduPilotMode99Env(gym.Env):
         # Check termination conditions
         terminated = self.is_terminated() or self._goal_reached_flag
         goal_dist_now = np.linalg.norm(self.goal_position - self.telemetry['position'])
+        self._min_goal_dist = min(self._min_goal_dist, goal_dist_now)
         if goal_dist_now < self.goal_radius * 1.0:
             self._approached_goal = True
         passed_goal = (self._approached_goal and
                        goal_dist_now > self.goal_radius * 1.5)
-        truncated = self.current_step >= self.max_steps or passed_goal
+        # Overshoot detection: once within 2x goal_radius, terminate if moving >1x goal_radius away
+        overshot = (self._min_goal_dist < self.goal_radius * 2.0 and
+                    goal_dist_now > self._min_goal_dist + self.goal_radius)
+        # Wrong-way detection: actual velocity pointing away from goal at >1.0 m/s
+        # Catches direction reversals before LQR braking causes HIGH TILT
+        # Only active after step 20 (allow initial acceleration) and outside goal radius
+        wrong_way = False
+        if self.current_step > 20 and goal_dist_now > self.goal_radius:
+            vel_h = self.telemetry['velocity'][:2]
+            speed_h_now = np.linalg.norm(vel_h)
+            if speed_h_now > 0.5:
+                goal_dir_now = (self.goal_position[:2] - self.telemetry['position'][:2]) / (goal_dist_now + 1e-6)
+                vel_toward_now = float(np.dot(vel_h, goal_dir_now))
+                wrong_way = vel_toward_now < -1.0
+        truncated = self.current_step >= self.max_steps or passed_goal or overshot or wrong_way
 
         # Log episode end reason
         if terminated or truncated:
@@ -748,6 +765,10 @@ class ArduPilotMode99Env(gym.Env):
                 print(f"⚠️ DISARMED! step={self.current_step} reward={self.episode_reward:.1f}")
             elif passed_goal:
                 print(f"🏃 PASSED GOAL! step={self.current_step} reward={self.episode_reward:.1f} goal_dist={goal_dist:.1f}m (threshold={self.goal_radius * 1.5:.1f}m)")
+            elif overshot:
+                print(f"↩️ OVERSHOT! step={self.current_step} reward={self.episode_reward:.1f} goal_dist={goal_dist:.1f}m min_dist={self._min_goal_dist:.1f}m")
+            elif wrong_way:
+                print(f"🔄 WRONG WAY! step={self.current_step} reward={self.episode_reward:.1f} goal_dist={goal_dist:.1f}m")
             else:
                 print(f"⏱️ TIMEOUT! step={self.current_step} reward={self.episode_reward:.1f} goal_dist={goal_dist:.1f}m")
 
@@ -866,6 +887,16 @@ class ArduPilotMode99Env(gym.Env):
         #     -2.0 × |yaw_rate| → at max ±0.3: -0.6/step
         reward -= 2.0 * abs(action[1])
         reward -= 2.0 * abs(action[3])
+
+        # 8d. Heading alignment reward: reward drone yaw aligned with goal direction
+        #     heading_align = cos(yaw - goal_angle): +1.0 when nose points at goal, -1.0 when opposite
+        #     weight=1.0: up to +500/episode when always aligned (vs goal bonus +1000)
+        if goal_dist > 1e-6:
+            goal_angle = np.arctan2(goal_dir_h[1], goal_dir_h[0])
+            current_yaw = self.telemetry['attitude'][2]
+            yaw_diff = np.arctan2(np.sin(goal_angle - current_yaw), np.cos(goal_angle - current_yaw))
+            heading_align = float(np.cos(yaw_diff))
+            reward += 1.0 * heading_align
 
         # 8b. Deceleration reward near goal
         #     Within 1.0× goal_radius (10m), penalize high approach speed to prevent overshoot.
