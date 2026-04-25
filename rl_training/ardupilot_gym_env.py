@@ -817,7 +817,7 @@ class ArduPilotMode99Env(gym.Env):
 
         Phase 0 curriculum — teach goal-directed flight:
             1. Goal-directed travel     +10 * dist_toward_goal_per_step → reward vel_toward_goal action
-            2. Goal reached bonus       +1000 on arrival
+            2. Goal reached bonus       +3000 on arrival
             3. Progress bonus           reward approaching goal each step
             4. Obstacle/crash penalty   safety constraints
             5. Altitude maintenance     keep near takeoff altitude
@@ -852,7 +852,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # 3. Goal reached bonus (one-time: fires on first entry into goal_radius)
         if goal_dist < self.goal_radius and not self._goal_reached_flag:
-            reward += 1000.0
+            reward += 3000.0
             self._goal_reached_flag = True
 
         # 4. Progress bonus (approaching goal each step) — bilateral
@@ -890,7 +890,7 @@ class ArduPilotMode99Env(gym.Env):
 
         # 8d. Heading alignment reward: reward drone yaw aligned with goal direction
         #     heading_align = cos(yaw - goal_angle): +1.0 when nose points at goal, -1.0 when opposite
-        #     weight=1.0: up to +500/episode when always aligned (vs goal bonus +1000)
+        #     weight=1.0: up to +500/episode when always aligned (vs goal bonus +3000)
         if goal_dist > 1e-6:
             goal_angle = np.arctan2(goal_dir_h[1], goal_dir_h[0])
             current_yaw = self.telemetry['attitude'][2]
