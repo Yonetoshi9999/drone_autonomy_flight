@@ -11,6 +11,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
 import torch
+import torch.nn as nn
 import os
 from ardupilot_gym_env import ArduPilotMode99Env
 
@@ -175,6 +176,7 @@ def train_ppo(
             ent_coef=ent_coef,
             vf_coef=0.5,
             max_grad_norm=0.5,
+            policy_kwargs=dict(net_arch=[128, 128], activation_fn=nn.ReLU),
             verbose=1,
             tensorboard_log=f'{log_dir}/ppo_{mission_type}',
             device='cpu'
