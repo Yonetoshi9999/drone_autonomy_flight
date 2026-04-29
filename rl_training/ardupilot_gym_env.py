@@ -637,8 +637,8 @@ class ArduPilotMode99Env(gym.Env):
 
         # Safety cap: prevent diagonal combination from exceeding MAX_VEL_H.
         # e.g. toward=4.0 + lateral=4.0 would give 5.66 m/s if not clipped.
-        # 2.0 m/s for short-range goals (10-15m); increase when goal distance extends.
-        MAX_VEL_H = 2.0
+        # 2.5 m/s for extended goals (15-20m); was 2.0 for short-range (10-15m).
+        MAX_VEL_H = 2.5
         h_mag = np.sqrt(vel_cmd[0]**2 + vel_cmd[1]**2)
         if h_mag > MAX_VEL_H:
             scale = MAX_VEL_H / h_mag
@@ -918,8 +918,8 @@ class ArduPilotMode99Env(gym.Env):
             reward -= 2.0 * (tilt_deg - 20)  # e.g. tilt=25° → -10.0/step, tilt=35° → -30.0/step
 
         # 9. Time penalty: discourage hovering in place
-        #    -1.0/step × 1500steps = -1500 → strong incentive for high-speed goal approach
-        reward -= 1.0
+        #    -3.0/step → strong incentive for shortest-path goal approach
+        reward -= 3.0
 
         # 10. Distance penalty: penalize being far from goal each step
         #     -0.05 × goal_dist/step → at 10m: -0.5/step, at 5m: -0.25/step
